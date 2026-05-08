@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Стилизованная "j" — ключ-туннель -->
+    <path
+        android:fillColor="#7DD3FC"
+        android:pathData="M54,20 C60,20 66,26 66,32 V68 C66,80 56,88 46,86 C38,85 32,78 32,70 H42 C42,74 44,76 48,76 C52,76 54,74 54,70 V32 C54,28 52,26 48,26 C44,26 42,28 42,32 H32 C32,24 38,20 46,20 Z"/>
+    <!-- Точка над j — через path (vector drawable не поддерживает <circle>) -->
+    <path
+        android:fillColor="#7DD3FC"
+        android:pathData="M60,24 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0"/>
+</vector>

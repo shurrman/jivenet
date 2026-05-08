@@ -1,0 +1,48 @@
+[Unit]
+Description=dnstt DNS tunnel server (jivenet)
+Documentation=https://www.bamsoftware.com/software/dnstt/
+After=network-online.target
+Wants=network-online.target
+# Поднимается до danted — неважно, но Dante должен быть готов к форварду
+Wants=danted.service
+After=danted.service
+
+[Service]
+Type=simple
+User=dnstt
+Group=dnstt
+
+# Читает /etc/dnstt/server.env: TUNNEL_DOMAIN, FORWARD_ADDR, LISTEN_ADDR
+EnvironmentFile=/etc/dnstt/server.env
+
+ExecStart=/usr/local/bin/dnstt-server \
+    -udp ${LISTEN_ADDR} \
+    -mtu ${MTU} \
+    -privkey-file /etc/dnstt/server.key \
+    ${TUNNEL_DOMAIN} \
+    ${FORWARD_ADDR}
+
+Restart=on-failure
+RestartSec=3s
+
+# Hardening — работаем непривилегированно, слушаем :5300 (iptables пробрасывает :53)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+ReadOnlyPaths=/etc/dnstt
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

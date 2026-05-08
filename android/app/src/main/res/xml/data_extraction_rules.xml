@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+: не разрешаем авто-бэкапы / cloud transfer настроек туннеля.
+     Публичный ключ не секрет, но для минимизации атакующей поверхности
+     отключаем экспорт полностью. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+    </device-transfer>
+</data-extraction-rules>

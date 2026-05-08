@@ -1,0 +1,32 @@
+[Unit]
+Description=3proxy HTTP+SOCKS5 auto-mode (jivenet forward target)
+Documentation=https://3proxy.org/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/3proxy /etc/3proxy/3proxy.cfg
+Restart=on-failure
+RestartSec=3s
+# `log` директива в конфиге пишет в stderr — systemd заберёт в journal
+StandardOutput=journal
+StandardError=journal
+
+# Hardening: процесс только слушает на loopback, ходит наружу TCP.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ReadOnlyPaths=/etc/3proxy
+
+[Install]
+WantedBy=multi-user.target

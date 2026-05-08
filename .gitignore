@@ -1,0 +1,49 @@
+# --- Build artifacts ----------------------------------------------------------
+android/app/build/
+android/build/
+android/.gradle/
+android/.idea/
+android/local.properties
+
+# Сгенерированные нативные артефакты — собираются через scripts/*.sh
+android/app/libs/*.aar
+android/app/src/main/jniLibs/**/*.so
+
+# Gradle wrapper distribution cache (бинарь .jar коммитим)
+android/gradle/wrapper/dists/
+
+# --- Vendored sources (клонируются скриптами, не коммитим) --------------------
+android/dnstt-src/
+android/tun2socks-src/
+server/dnstt/
+server/3proxy/
+
+# Старые папки от прошлых архитектур
+android/dnstt-mobile/
+
+# --- Go ------------------------------------------------------------------------
+*.test
+*.out
+android/tun2socks-mobile/dist/
+
+# --- Секреты — НИКОГДА не коммитить -------------------------------------------
+.env
+.env.*
+!.env.example
+server/*.key
+server/server.key
+*.private
+**/*.keystore
+**/*.jks
+
+# --- Артефакты сборки и распространения ---------------------------------------
+jivenet-debug.apk
+jivenet-release.apk
+*.apk
+
+# --- IDE / OS -----------------------------------------------------------------
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
+jivenet-qr.png

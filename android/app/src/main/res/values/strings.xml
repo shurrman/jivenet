@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">jivenet</string>
+    <string name="settings_title">Настройки</string>
+
+    <!-- Main screen -->
+    <string name="status_connected">Подключено</string>
+    <string name="status_disconnected">Отключено</string>
+    <string name="status_connecting">Подключение…</string>
+    <string name="action_connect">Подключить</string>
+    <string name="action_disconnect">Отключить</string>
+    <string name="mode_vpn">VPN (весь трафик)</string>
+    <string name="mode_proxy">Локальный SOCKS-прокси</string>
+    <string name="proxy_hint">Укажите в браузере SOCKS5 %1$s:%2$d</string>
+    <string name="stats_uptime">Время: %1$s</string>
+    <string name="stats_traffic">Трафик: ↑ %1$s  ↓ %2$s</string>
+    <string name="stats_streams">Соединений: %1$d (всего %2$d)</string>
+
+    <!-- Settings -->
+    <string name="label_domain">Домен туннеля</string>
+    <string name="hint_domain">t.example.com</string>
+    <string name="label_pubkey">Публичный ключ (hex)</string>
+    <string name="label_doh">DoH resolver</string>
+    <string name="label_mode">Режим</string>
+    <string name="label_port">Локальный порт (Proxy)</string>
+    <string name="scan_qr">Сканировать QR</string>
+    <string name="save">Сохранить</string>
+    <string name="invalid_config">Конфиг некорректен: %1$s</string>
+    <string name="config_applied">Конфиг применён</string>
+
+    <!-- Notifications -->
+    <string name="notif_channel_name">jivenet туннель</string>
+    <string name="notif_channel_desc">Статус DNS-туннеля</string>
+    <string name="notif_vpn_title">VPN активен</string>
+    <string name="notif_proxy_title">SOCKS5-прокси активен</string>
+    <string name="notif_stop">Остановить</string>
+</resources>
