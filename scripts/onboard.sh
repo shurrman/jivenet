@@ -166,8 +166,16 @@ if [[ -n "$RELEASE_TAG" ]]; then
         gh release upload "$RELEASE_TAG" --clobber \
             "$OUT/jivenet.apk" "$OUT/jivenet-config.png" "$OUT/INSTALL.txt"
     fi
-    URL="https://github.com/shurrman/jivenet/releases/tag/$RELEASE_TAG"
-    echo "ok: $URL"
+    BASE="https://github.com/shurrman/jivenet/releases/download/$RELEASE_TAG"
+    PAGE="https://github.com/shurrman/jivenet/releases/tag/$RELEASE_TAG"
     echo
-    echo "Короткая ссылка для пользователя: $URL"
+    echo "ok: релиз опубликован."
+    echo
+    echo "Страница релиза:"
+    echo "  $PAGE"
+    echo
+    echo "Прямые ссылки на скачивание (отправлять получателю):"
+    echo "  APK:    $BASE/jivenet.apk"
+    echo "  QR:     $BASE/jivenet-config.png"
+    echo "  INSTALL: $BASE/INSTALL.txt"
 fi
