@@ -75,7 +75,7 @@ cp "$APK_SRC" "$OUT/jivenet.apk"
 echo "$JSON" > "$OUT/jivenet-config.json"
 qrencode -t PNG -s 10 -o "$OUT/jivenet-config.png" -- "$JSON"
 
-VERSION=$(grep -oE 'versionName = "[^"]*"' "$HERE/android/app/build.gradle.kts" | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+VERSION=$(grep -oE 'versionName = "[^"]*"' "$HERE/android/app/build.gradle.kts" | head -1 | sed -E 's/.*"([^"]+)".*/\1/' || echo unknown)
 PUBKEY=$(echo "$JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin)["pubkey"])')
 DOMAIN=$(echo "$JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin)["domain"])')
 

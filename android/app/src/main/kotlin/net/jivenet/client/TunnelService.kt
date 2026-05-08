@@ -1,30 +1,34 @@
 package net.jivenet.client
 
-import android.app.PendingIntent
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.VpnService
-import android.os.ParcelFileDescriptor
 import android.util.Log
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import net.jivenet.client.config.ConfigRepository
-import net.jivenet.client.config.TunnelConfig
 
 /**
- * VPN-режим. В отличие от Proxy-режима (где пользователь сам настраивает
- * прокси в WiFi/SocksDroid), TunnelService:
+ * VPN-режим v0.9.0 — на базе sing-box (libbox.aar).
  *
- *   1. Запускает dnstt-client (subprocess) — слушает SOCKS5/HTTP на 127.0.0.1:1080.
- *   2. Поднимает TUN через VpnService.Builder — Android начинает заворачивать
- *      ВЕСЬ трафик устройства в этот fd.
- *   3. Запускает tun2socks (in-process Go-биндинг) — читает из TUN-fd и
- *      форвардит TCP/UDP в наш SOCKS5 прокси на 127.0.0.1:1080.
+ * Поток:
+ *   1. dnstt-client (subprocess) → SOCKS5 на 127.0.0.1:cfg.localPort
+ *   2. sing-box принимает наш JSON-конфиг через Libbox.NewCommandServer:
+ *        - TUN inbound (получает fd через PlatformInterface.openTun)
+ *        - DNS-резолвер (DoH через "proxy" outbound — фикс DNS-leak)
+ *        - SOCKS5 outbound → 127.0.0.1:cfg.localPort
+ *   3. ConnectivityManager.NetworkCallback ловит смену сети
+ *      (Wi-Fi ↔ мобильная) → перезапускаем туннель целиком (auto-reconnect).
  *
- * Преимущество: пользователь делает один тап и весь трафик идёт через
- * туннель. Никакого SocksDroid и adb. Работает на мобильной сети.
- *
- * ВАЖНО: само приложение исключается из VPN через addDisallowedApplication —
- * иначе DNS-запросы dnstt-client (UDP к резолверу оператора) попадут в TUN
- * и зациклятся.
+ * По сравнению с v0.2.0 (tun2socks):
+ *   + Нет DNS-leak (DNS теперь резолвится сервером, не оператором)
+ *   + FakeIP — мгновенный ответ для DNS-запросов
+ *   + Auto-reconnect при смене сети
+ *   - +14 МБ libbox.aar в APK (R8 в release-сборке выкинет неиспользуемое).
  */
 class TunnelService : VpnService() {
 
@@ -32,20 +36,19 @@ class TunnelService : VpnService() {
         const val ACTION_START = "net.jivenet.client.START_VPN"
         const val ACTION_STOP = "net.jivenet.client.STOP_VPN"
         private const val TAG = "TunnelService"
-
-        // Приватная подсеть для TUN — не должна пересекаться с реальными.
-        private const val VIRTUAL_IP = "10.200.0.2"
-        private const val VIRTUAL_DNS = "1.1.1.1"
-        private const val MTU = 1500
     }
 
-    @Volatile private var tunnel: ParcelFileDescriptor? = null
-    @Volatile private var tunFd: Int = -1
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val mutex = Mutex()
+    private var platform: SingboxPlatform? = null
+    private var connectivityCallback: ConnectivityManager.NetworkCallback? = null
+
+    @Volatile private var lastActiveNetwork: Network? = null
+    @Volatile private var running = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            shutdown()
+            scope.launch { shutdown(stopSelf = true) }
             return START_NOT_STICKY
         }
 
@@ -61,99 +64,149 @@ class TunnelService : VpnService() {
             ),
         )
 
-        scope.launch { launchVpn() }
+        scope.launch { mutex.withLock { startTunnel() } }
         return START_STICKY
     }
 
-    private suspend fun launchVpn() {
+    private suspend fun startTunnel() {
+        if (running) {
+            Log.i(TAG, "startTunnel: already running, skip")
+            return
+        }
         val cfg = ConfigRepository(this).current()
         if (!cfg.isComplete()) {
             Log.w(TAG, "config incomplete — stopping")
-            shutdown(); return
+            shutdown(stopSelf = true); return
         }
-        if (!Tun2socksBridge.isAvailable()) {
-            Log.e(TAG, "tun2socks AAR отсутствует — VPN-режим недоступен")
-            shutdown(); return
+        if (!SingboxBridge.isAvailable) {
+            Log.e(TAG, "libbox.aar отсутствует — VPN-режим недоступен. " +
+                "Соберите через android/scripts/build-singbox-aar.sh.")
+            shutdown(stopSelf = true); return
         }
 
-        // 1. dnstt-client должен слушать ДО того, как мы запустим tun2socks.
+        // 1) dnstt-client subprocess — должен быть до старта sing-box.
         try {
             DnsttBridge.startProxy(this, cfg)
-            Log.i(TAG, "dnstt-client started (listening 127.0.0.1:${cfg.localPort})")
+            Log.i(TAG, "dnstt-client запущен на 127.0.0.1:${cfg.localPort}")
         } catch (t: Throwable) {
-            Log.e(TAG, "dnstt-client start failed", t)
-            shutdown(); return
+            Log.e(TAG, "dnstt-client старт упал", t)
+            shutdown(stopSelf = true); return
         }
 
-        // 2. Поднимаем TUN.
-        val pfd = try {
-            buildVpnInterface()
-        } catch (t: Throwable) {
-            Log.e(TAG, "VpnService.Builder.establish() failed", t)
-            shutdown(); return
-        }
-        tunnel = pfd
-        tunFd = pfd.detachFd() // Go возьмёт владение fd
-        Log.i(TAG, "TUN установлен fd=$tunFd")
+        // 2) sing-box. PlatformInterface создаст TUN через VpnService.Builder
+        //    в callback openTun().
+        val pi = SingboxPlatform(
+            service = this,
+            sessionName = getString(R.string.app_name),
+            configureIntent = MainActivity::class.java,
+        )
+        platform = pi
+        val configJson = SingboxConfig.build(
+            cfg = cfg,
+            ourPackageName = packageName,
+        )
 
-        // 3. tun2socks: TUN-fd → SOCKS5 (наш dnstt-client).
         try {
-            Tun2socksBridge.start(tunFd, "socks5://127.0.0.1:${cfg.localPort}", MTU)
+            SingboxBridge.start(this, pi, configJson)
+            running = true
+            Log.i(TAG, "sing-box запущен")
         } catch (t: Throwable) {
-            Log.e(TAG, "tun2socks start failed", t)
-            shutdown()
+            Log.e(TAG, "sing-box не запустился — конфиг или libbox", t)
+            shutdown(stopSelf = true); return
         }
+
+        registerNetworkCallback()
     }
 
-    private fun buildVpnInterface(): ParcelFileDescriptor {
-        val builder = Builder()
-            .setSession(getString(R.string.app_name))
-            .setMtu(MTU)
-            .addAddress(VIRTUAL_IP, 30)
-            .addRoute("0.0.0.0", 0)            // весь IPv4 в туннель
-            // ВАЖНО: addDnsServer НЕ ВЫЗЫВАЕМ намеренно. tun2socks ловит
-            // UDP DNS-пакеты в TUN, пытается переслать через SOCKS5 UDP
-            // ASSOCIATE — но 3proxy auto-mode на сервере UDP-relay не
-            // поддерживает, и DNS-запросы дохнут (Chrome → NO_INTERNET).
-            // Без addDnsServer Android использует DNS underlying network
-            // (резолвер оператора через ccmni0, мимо VPN). Это DNS-leak,
-            // но сами TCP-коннекты к резолвлённым IP идут через TUN.
-            // Долгосрочный фикс — fakeip+DoH в самом приложении.
-            // Сами себя исключаем — dnstt-client на 127.0.0.1:1080 и его
-            // исходящие UDP к DNS оператора не должны заходить обратно в TUN.
-            .addDisallowedApplication(packageName)
+    /**
+     * Auto-reconnect. ConnectivityManager шлёт колбэки на смене сети
+     * (Wi-Fi ↔ Cellular ↔ нет сети). При появлении новой default-сети
+     * после потери — перезапускаем sing-box, чтобы он переоткрыл DoH/SOCKS5
+     * через protect()-сокеты на новой underlying network.
+     */
+    private fun registerNetworkCallback() {
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return
+        val req = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            .build()
 
-        // Тап по значку ключа в статус-баре открывает наше приложение.
-        val pi = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        builder.setConfigureIntent(pi)
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                val prev = lastActiveNetwork
+                lastActiveNetwork = network
+                if (prev != null && prev != network && running) {
+                    Log.i(TAG, "сеть изменилась ($prev → $network) — перезапуск туннеля")
+                    scope.launch { mutex.withLock { restartTunnel() } }
+                }
+            }
 
-        return builder.establish()
-            ?: error("VpnService.Builder.establish() returned null (no permission?)")
+            override fun onLost(network: Network) {
+                if (network == lastActiveNetwork) {
+                    Log.i(TAG, "потеряна default-сеть $network")
+                    lastActiveNetwork = null
+                }
+            }
+        }
+        cm.registerDefaultNetworkCallback(cb)
+        connectivityCallback = cb
+    }
+
+    private suspend fun restartTunnel() {
+        if (!running) return
+        // Оставляем VPN permission активным, переоткрываем только sing-box+dnstt.
+        val cfg = ConfigRepository(this@TunnelService).current()
+        runCatching { SingboxBridge.stop() }
+        platform?.closeTun()
+        runCatching { DnsttBridge.stop() }
+
+        try {
+            DnsttBridge.startProxy(this@TunnelService, cfg)
+        } catch (t: Throwable) {
+            Log.e(TAG, "dnstt restart fail", t)
+            shutdown(stopSelf = true); return
+        }
+        val pi = SingboxPlatform(this@TunnelService, getString(R.string.app_name), MainActivity::class.java)
+        platform = pi
+        try {
+            SingboxBridge.start(
+                this@TunnelService,
+                pi,
+                SingboxConfig.build(cfg = cfg, ourPackageName = packageName),
+            )
+            Log.i(TAG, "перезапуск туннеля успешен")
+        } catch (t: Throwable) {
+            Log.e(TAG, "sing-box restart fail", t)
+            shutdown(stopSelf = true)
+        }
     }
 
     override fun onRevoke() {
         Log.i(TAG, "onRevoke()")
-        shutdown()
+        scope.launch { mutex.withLock { shutdown(stopSelf = true) } }
     }
 
     override fun onDestroy() {
-        shutdown()
+        runBlocking { shutdown(stopSelf = false) }
         scope.cancel()
         super.onDestroy()
     }
 
-    private fun shutdown() {
-        runCatching { Tun2socksBridge.stop() }
+    private suspend fun shutdown(stopSelf: Boolean) {
+        running = false
+        connectivityCallback?.let { cb ->
+            runCatching {
+                getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(cb)
+            }
+        }
+        connectivityCallback = null
+
+        runCatching { SingboxBridge.stop() }
+        platform?.closeTun()
+        platform = null
         runCatching { DnsttBridge.stop() }
-        runCatching { tunnel?.close() }
-        tunnel = null
-        tunFd = -1
+
         stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        if (stopSelf) stopSelf()
     }
 }

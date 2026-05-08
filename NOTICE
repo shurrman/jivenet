@@ -1,0 +1,39 @@
+jivenet — DNS-over-HTTPS-туннель (Debian-сервер + Android-клиент)
+
+Copyright (C) 2026 shurrman <https://github.com/shurrman/jivenet>
+
+Этот проект распространяется под лицензией GNU General Public License v3
+(см. файл LICENSE). С версии 0.9.0 проект использует sing-box как Android
+TUN/DNS-движок и поэтому подпадает под условия GPL-3 sing-box.
+
+
+Используемые внешние компоненты
+================================
+
+* dnstt (David Fifield, bamsoftware.com)
+  — реализация DoH-туннеля Noise+KCP+smux.
+  https://www.bamsoftware.com/software/dnstt/
+  Лицензия: CC0 (public domain).
+
+* sing-box (SagerNet/nekohasekai), с v0.9.0
+  — userspace network stack (gVisor), DoH-резолвер, TUN-инбаунд.
+  https://github.com/SagerNet/sing-box
+  Лицензия: GPL-3.0-or-later. Используется experimental/libbox через
+  gomobile bind. Структура android/app/src/main/kotlin/.../Singbox*.kt
+  опирается на sing-box-for-android (тот же автор, та же лицензия) —
+  при обновлении libbox API сверяться с тем репозиторием.
+
+* tun2socks v2 (xjasonlyu)
+  — был основным TUN-форвардером в v0.1.0–v0.2.0; с v0.9.0 не используется.
+  https://github.com/xjasonlyu/tun2socks
+  Лицензия: GPL-3.
+
+* 3proxy (3APA3A)
+  — серверная сторона, SOCKS5/HTTP auto-mode.
+  https://github.com/3proxy/3proxy
+  Лицензия: BSD-3-Clause.
+
+* gomobile (sagernet-fork)
+  — генерация Android AAR из Go-модулей. Только сборка, не runtime.
+  https://github.com/sagernet/gomobile
+  Лицензия: BSD-3-Clause (golang.org/x/mobile).

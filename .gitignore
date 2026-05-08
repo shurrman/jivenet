@@ -7,6 +7,7 @@ android/local.properties
 
 # Сгенерированные нативные артефакты — собираются через scripts/*.sh
 android/app/libs/*.aar
+android/app/libs/*-sources.jar
 android/app/src/main/jniLibs/**/*.so
 
 # Gradle wrapper distribution cache (бинарь .jar коммитим)
@@ -15,6 +16,7 @@ android/gradle/wrapper/dists/
 # --- Vendored sources (клонируются скриптами, не коммитим) --------------------
 android/dnstt-src/
 android/tun2socks-src/
+android/sing-box-src/
 server/dnstt/
 server/3proxy/
 

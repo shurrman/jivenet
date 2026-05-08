@@ -156,23 +156,28 @@ git clone --depth=1 https://github.com/net2share/dnstt.git dnstt-src
 ./scripts/build-binaries.sh
 # → app/src/main/jniLibs/arm64-v8a/libdnstt_client.so
 
-# 3. Клонировать tun2socks и собрать .aar для VPN-режима
-git clone --depth=1 https://github.com/xjasonlyu/tun2socks.git tun2socks-src
-./scripts/build-aar.sh
-# → app/libs/tun2socks.aar  (через gomobile bind, нужен ANDROID_NDK_HOME)
+# 3. Клонировать sing-box и собрать libbox.aar (с v0.9.0 — это TUN/DNS-движок)
+git clone --depth=1 https://github.com/SagerNet/sing-box.git sing-box-src
+./scripts/build-singbox-aar.sh
+# → app/libs/libbox.aar  (~14 МБ; нужен ANDROID_NDK_HOME, Go 1.24+, JDK 17+)
+# Скрипт сам поставит sagernet-форк gomobile (`v0.1.12`) — обычный
+# upstream gomobile с sing-box не работает.
 
 # 4. Собрать APK
 export JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
 ./gradlew :app:assembleDebug
-#   → app/build/outputs/apk/debug/app-debug.apk
+#   → app/build/outputs/apk/debug/app-debug.apk  (~40 МБ)
 ```
 
-Если шаг 3 (`tun2socks.aar`) пропустить, APK всё равно соберётся — Tun2socksBridge через рефлексию определит отсутствие класса и VPN-режим в UI пометит как недоступный (Proxy-режим работает без AAR).
+Если шаг 3 (`libbox.aar`) пропустить, APK всё равно соберётся — `SingboxBridge` через рефлексию определит отсутствие класса и VPN-режим в UI пометит как недоступный. Proxy-режим работает без AAR (использует только `libdnstt_client.so`).
 
-### Что именно лежит в APK
+> До v0.2.0 включительно вместо sing-box использовался [xjasonlyu/tun2socks](https://github.com/xjasonlyu/tun2socks) (`scripts/build-aar.sh` → `tun2socks.aar`). Скрипт оставлен для совместимости / возможности откатиться, но в основной код v0.9.0 не подключается.
+
+### Что именно лежит в APK (v0.9.0)
 
 ```
-lib/arm64-v8a/libdnstt_client.so    — наш кросс-скомпилированный dnstt-client (7.6 МБ)
+lib/arm64-v8a/libbox.so             — sing-box (gVisor + DNS + outbounds, ~42 МБ)
+lib/arm64-v8a/libdnstt_client.so    — наш кросс-скомпилированный dnstt-client (~8 МБ)
 lib/arm64-v8a/libbarhopper_v3.so    — ML Kit native для QR-сканера
 lib/arm64-v8a/libandroidx.graphics.path.so
 lib/arm64-v8a/libdatastore_shared_counter.so

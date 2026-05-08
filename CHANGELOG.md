@@ -1,5 +1,99 @@
 # Changelog
 
+## 0.9.0 — 2026-05-09
+
+Замена tun2socks на sing-box. Встроенный DoH-резолвер фиксит DNS-leak,
+auto-reconnect при смене сети.
+
+### Архитектура
+
+В v0.2.0 трафик шёл `Android → TUN → tun2socks → SOCKS5 → dnstt-client`,
+DNS — мимо туннеля через резолвер оператора (DNS-leak). В v0.9.0 связку
+TUN+tun2socks заменяет sing-box с встроенным DoH-резолвером:
+
+```
+Android apps → TUN (sing-box gVisor)
+                 ├─ DNS UDP/53  → hijack → DoH://1.1.1.1 → outbound[proxy]
+                 └─ TCP/UDP             → outbound[proxy] (SOCKS5 → dnstt)
+                                              │
+                                              ▼
+                                      dnstt-client subprocess
+                                              │
+                                              ▼
+                                         сервер
+```
+
+dnstt-client всё так же запущен subprocess'ом (libdnstt_client.so из
+jniLibs) — sing-box ходит к нему через SOCKS5 outbound. Сам dnstt
+менять не было причин: он стабилен, а его архитектура (один stream-туннель)
+идеально вписывается в один outbound sing-box.
+
+### Добавлено
+
+- **`android/sing-box-src/`** — vendored sing-box (`SagerNet/sing-box`,
+  GPL-3, не коммитится). Клонируется отдельно перед сборкой:
+
+      git clone --depth=1 https://github.com/SagerNet/sing-box.git \
+          android/sing-box-src
+
+- **`android/scripts/build-singbox-aar.sh`** — собирает `libbox.aar`
+  (~14 МБ) через `gomobile bind` с тэгами `with_gvisor,with_quic,with_utls`.
+  Использует sagernet-форк gomobile (требуется патч под sing-box).
+  Кладёт результат в `android/app/libs/libbox.aar`.
+- **`SingboxBridge.kt`** — Kotlin-фасад для `Libbox.NewCommandServer`
+  + `StartOrReloadService(jsonConfig)`. Reflective `isAvailable` для
+  graceful-degradation если libbox не собран.
+- **`SingboxPlatform.kt`** — реализация `io.nekohasekai.libbox.PlatformInterface`:
+  `openTun()` строит VpnService.Builder из `TunOptions`,
+  `autoDetectInterfaceControl()` вызывает `protect(fd)` для исходящих
+  соединений sing-box (DoH/SOCKS5 не должны loop'нуться обратно в TUN).
+  Структурно следует SFA (sing-box-for-android), упрощено для нашего
+  одного outbound.
+- **`SingboxConfig.kt`** — генератор JSON-конфига:
+  - `inbounds[type=tun]` с `auto_route=true`, `stack=gvisor`,
+    `exclude_package=[наш bundle]`
+  - `dns.servers` с DoH `https://1.1.1.1/dns-query` через outbound `proxy`
+    + FakeIP `198.18.0.0/15`
+  - `outbounds[type=socks]` → `127.0.0.1:1080` (наш dnstt-client)
+  - `route.rules` — DNS hijack + private IP → direct
+- **Auto-reconnect**: `ConnectivityManager.NetworkCallback` в `TunnelService`.
+  При появлении новой default-сети после потери (Wi-Fi ↔ мобильная)
+  перезапускает sing-box+dnstt с теми же настройками.
+
+### Изменено
+
+- **VPN-режим**: `tun2socks-mobile/` Go-модуль больше не используется
+  (но vendored остался — на случай нужно собрать legacy-вариант).
+- `TunnelService.kt` целиком переписан под sing-box. Убрана ручная сборка
+  TUN через `Builder.addAddress/.addRoute` — теперь это делает
+  `SingboxPlatform.openTun()` из `TunOptions`.
+- APK подрос до ~40 МБ (`libbox.so` 42 МБ uncompressed). R8 в release-сборке
+  должен срезать неиспользуемые транспорты sing-box, но в debug-сборке
+  весь движок включён.
+
+### Исправлено
+
+- **DNS-leak**. Раньше `addDnsServer` не вызывался намеренно — 3proxy
+  auto-mode не умеет SOCKS5 UDP-relay, поэтому tun2socks не мог
+  пробросить DNS. Сейчас sing-box перехватывает DNS UDP внутри TUN
+  и резолвит через DoH-сервер (1.1.1.1 по умолчанию), сам DoH-запрос
+  идёт через `outbound[proxy]` → dnstt → сервер. Оператор видит только
+  зашифрованный трафик dnstt, без DNS-leak'а.
+- **Зависание при смене сети**. При переключении Wi-Fi ↔ мобильная
+  туннель раньше требовал ручного «Отключить → Подключить» — теперь
+  `NetworkCallback` делает это автоматически.
+
+### Ограничения
+
+- Этот релиз ещё не прошёл полное полевое тестирование, но клиент
+  собирается и запускается. Если что-то сломалось — откатывайтесь на
+  v0.2.0 (он зафиксирован, signed APK на странице релиза).
+- Сервер не менялся (3proxy + dnstt-server), `server/install.sh` остался
+  тем же. Конфиг (domain/pubkey) совместим.
+- libbox содержит много транспортов (QUIC, uTLS, gVisor) — запас на
+  будущее. Сейчас фактически используются только DNS/DoH-модуль и
+  TUN-инбаунд + SOCKS5-outbound.
+
 ## 0.2.0 — 2026-05-08
 
 Полноценный VPN-режим в Android-клиенте.

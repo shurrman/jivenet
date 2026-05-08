@@ -6,13 +6,15 @@
   Принимает DNS-запросы с инкапсулированным трафиком, расшифровывает и выпускает в интернет через локальный прокси (3proxy в auto-режиме: HTTP + SOCKS5 на одном порту).
 - **`android/`** — клиентское приложение для Android (APK).
   Два режима:
-  - **VPN** (рекомендуется) — захватывает весь трафик устройства через системный `VpnService` + встроенный tun2socks. Один тап — Android спрашивает разрешение — все приложения идут через туннель. Работает на Wi-Fi и мобильной сети без adb и сторонних приложений.
+  - **VPN** (рекомендуется, по умолчанию) — захватывает весь трафик устройства через системный `VpnService` + встроенный sing-box. Один тап — Android спрашивает разрешение — все приложения идут через туннель. С v0.9.0: встроенный DoH-резолвер (нет DNS-leak), FakeIP, auto-reconnect при смене сети.
   - **Proxy** — локальный HTTP+SOCKS5 на `127.0.0.1:1080`, для тех кому нужен per-app или Firefox+FoxyProxy. На мобильной сети требует SocksDroid или adb.
 
-Движок туннеля — [dnstt](https://www.bamsoftware.com/software/dnstt/) (Noise_NK + KCP + smux поверх DoH). Серверная сторона использует его как бинарник, клиентская — как встроенный subprocess внутри APK.
+Движки: туннель — [dnstt](https://www.bamsoftware.com/software/dnstt/) (Noise_NK + KCP + smux поверх DoH); userspace network stack клиента — [sing-box](https://sing-box.sagernet.org/) (`experimental/libbox` через gomobile, с v0.9.0).
 
 ```
-Android ─▶ DoH resolver (Cloudflare/Google/…) ─▶ ваш authoritative NS ─▶ dnstt-server ─▶ 3proxy (HTTP+SOCKS5) ─▶ Интернет
+Android apps ─▶ TUN ─▶ sing-box ─▶ SOCKS5 ─▶ dnstt-client ─▶ DoH resolver ─▶ ваш authoritative NS ─▶ dnstt-server ─▶ 3proxy ─▶ Интернет
+                       │
+                       └─ DNS UDP перехват ─▶ DoH 1.1.1.1 (через тот же tunnel) — фикс DNS-leak
 ```
 
 Подробнее про архитектуру — [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
@@ -68,7 +70,7 @@ dig TXT random123.tn.example.com @1.1.1.1
 
 ```bash
 ./scripts/onboard.sh                         # локальный bundle в onboarding/
-./scripts/onboard.sh --release v0.2.0        # + публикация в GitHub Release
+./scripts/onboard.sh --release v0.9.0        # + публикация в GitHub Release
 ```
 
 Скрипт собирает `onboarding/`:
@@ -79,7 +81,7 @@ dig TXT random123.tn.example.com @1.1.1.1
 - **`INSTALL.txt`** — пошаговая инструкция получателю (как поставить APK, как импортировать конфиг, что делать на мобильной сети).
 - **`jivenet-onboarding.zip`** — всё одним архивом для отправки в мессенджере.
 
-С `--release v0.2.0` (требует `gh auth login` разово) скрипт **загрузит** APK + QR + INSTALL в GitHub Release. Получателю достаточно одной ссылки `https://github.com/<вы>/jivenet/releases/tag/v0.2.0` — он скачает APK браузером без ограничений мессенджеров (Telegram режет вложения 2 ГБ, WhatsApp 100 МБ — нам хватит, но ссылка удобнее).
+С `--release v0.9.0` (требует `gh auth login` разово) скрипт **загрузит** APK + QR + INSTALL в GitHub Release. Получателю достаточно одной ссылки `https://github.com/<вы>/jivenet/releases/tag/v0.9.0` — он скачает APK браузером без ограничений мессенджеров (Telegram режет вложения 2 ГБ, WhatsApp 100 МБ — нам хватит, но ссылка удобнее).
 
 ### 5. Установить APK на устройство
 
