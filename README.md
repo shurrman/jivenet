@@ -64,7 +64,24 @@ dig TXT random123.tn.example.com @1.1.1.1
 # sudo journalctl -u dnstt-server -f
 ```
 
-### 4. Установить APK
+### 4. Раздача нового пользователю (одной командой)
+
+```bash
+./scripts/onboard.sh                         # локальный bundle в onboarding/
+./scripts/onboard.sh --release v0.2.0        # + публикация в GitHub Release
+```
+
+Скрипт собирает `onboarding/`:
+
+- **`jivenet.apk`** — APK для установки (33 МБ).
+- **`jivenet-config.png`** — QR с конфигом (домен + pubkey + DoH), отсканировать в приложении в `Настройки → Сканировать QR`.
+- **`jivenet-config.json`** — тот же конфиг текстом, fallback если QR не отсканивается.
+- **`INSTALL.txt`** — пошаговая инструкция получателю (как поставить APK, как импортировать конфиг, что делать на мобильной сети).
+- **`jivenet-onboarding.zip`** — всё одним архивом для отправки в мессенджере.
+
+С `--release v0.2.0` (требует `gh auth login` разово) скрипт **загрузит** APK + QR + INSTALL в GitHub Release. Получателю достаточно одной ссылки `https://github.com/<вы>/jivenet/releases/tag/v0.2.0` — он скачает APK браузером без ограничений мессенджеров (Telegram режет вложения 2 ГБ, WhatsApp 100 МБ — нам хватит, но ссылка удобнее).
+
+### 5. Установить APK на устройство
 
 Готовый debug-APK: `/Users/aaa/projects/jivenet/jivenet-debug.apk` (25 МБ, только arm64-v8a).
 
