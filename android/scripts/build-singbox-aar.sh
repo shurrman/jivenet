@@ -98,7 +98,7 @@ echo "gomobile init..."
 mkdir -p "$HERE/app/libs"
 cd "$SRC"
 
-TAGS="with_gvisor,with_quic,with_utls,badlinkname,tfogo_checklinkname0"
+TAGS="with_gvisor,with_quic,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0"
 LDFLAGS="-X internal/godebug.defaultGODEBUG=multipathtcp=0 -s -w -buildid= -checklinkname=0"
 
 echo "gomobile bind (tags=$TAGS)..."

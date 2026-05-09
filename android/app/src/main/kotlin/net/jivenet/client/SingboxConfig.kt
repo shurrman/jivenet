@@ -3,14 +3,14 @@ package net.jivenet.client
 import net.jivenet.client.config.TunnelConfig
 
 /**
- * Генератор JSON-конфига для sing-box.
+ * Генератор JSON-конфига для sing-box 1.14+.
  *
  * Архитектура: TUN → DoH-резолвер (через прокси) → SOCKS5 outbound (наш
  * dnstt-client) → сервер → интернет.
  *
  *     Android apps  →  TUN (sing-box, gVisor stack)
  *                            │
- *                            ├─ DNS UDP/53  →  hijacked  →  DoH://1.1.1.1
+ *                            ├─ DNS UDP/53  →  hijacked  →  fakeip + DoH
  *                            │                              (через "proxy")
  *                            │
  *                            └─ TCP/UDP    →  routed     →  outbound[proxy]
@@ -38,8 +38,11 @@ import net.jivenet.client.config.TunnelConfig
  *     Это убирает DNS-rebinding-проблемы и ускоряет — fakeip отдаётся
  *     мгновенно, без round-trip на DoH.
  *
- * Источник истины для опций — sing-box docs:
- *   https://sing-box.sagernet.org/configuration/
+ * Формат конфига — sing-box 1.14 (новый, после миграции от 1.12):
+ *   https://sing-box.sagernet.org/migration/#migrate-to-new-dns-server-formats
+ *   * dns.servers[*].type = "https" / "udp" / "fakeip"
+ *   * fakeip как отдельный server, не nested-опция
+ *   * route.default_domain_resolver указывает по умолчанию
  */
 object SingboxConfig {
 
@@ -53,41 +56,26 @@ object SingboxConfig {
         tunInet4Address: String = "172.19.0.1/30",
         ourPackageName: String,
     ): String {
-        // sing-box понимает плоский DoH URL ("https://1.1.1.1/dns-query")
-        // и делает к нему обычный HTTPS-POST. Если в нашем cfg.doh
-        // префикс udp:// или dot:// — это спецсхема dnstt-client (он
-        // использует операторский DNS как транспорт), к sing-box это не
-        // относится. Для встроенного DoH-резолвера ВСЕГДА Cloudflare —
-        // он стабилен, и сами DoH-запросы идут через туннель, поэтому
-        // блокировки на стороне оператора не страшны.
-        val resolverDoh = "https://1.1.1.1/dns-query"
-
+        // sing-box внутри использует обычный DoH к Cloudflare (1.1.1.1).
+        // Сам DoH-запрос уходит через outbound `proxy` (SOCKS5 → dnstt),
+        // поэтому блокировки оператора не страшны: трафик зашифрован.
         return """
         {
           "log": { "level": "warn" },
 
           "dns": {
             "servers": [
-              { "tag": "doh-remote",
-                "address": "$resolverDoh",
-                "address_resolver": "dns-direct",
+              { "type": "https",
+                "tag": "doh-remote",
+                "server": "1.1.1.1",
                 "detour": "proxy" },
-              { "tag": "dns-direct",
-                "address": "1.1.1.1",
-                "detour": "direct" },
-              { "tag": "dns-fakeip",
-                "address": "fakeip" },
-              { "tag": "dns-block",
-                "address": "rcode://success" }
+              { "type": "fakeip",
+                "tag": "dns-fakeip",
+                "inet4_range": "198.18.0.0/15" }
             ],
             "rules": [
-              { "outbound": "any", "server": "dns-direct" },
               { "query_type": ["A", "AAAA"], "server": "dns-fakeip" }
             ],
-            "fakeip": {
-              "enabled": true,
-              "inet4_range": "198.18.0.0/15"
-            },
             "independent_cache": true,
             "strategy": "ipv4_only"
           },
@@ -101,11 +89,7 @@ object SingboxConfig {
               "auto_route": true,
               "strict_route": false,
               "stack": "gvisor",
-              "exclude_package": ["$ourPackageName"],
-              "platform": {
-                "http_proxy": { "enabled": false }
-              },
-              "sniff": true
+              "exclude_package": ["$ourPackageName"]
             }
           ],
 
@@ -122,6 +106,7 @@ object SingboxConfig {
 
           "route": {
             "rules": [
+              { "action": "sniff" },
               { "protocol": "dns", "action": "hijack-dns" },
               { "ip_is_private": true, "outbound": "direct" }
             ],

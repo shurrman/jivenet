@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.9.1 — 2026-05-09
+
+Fix-релиз поверх 0.9.0 — конфиг sing-box и тэги libbox под 1.14.
+
+### Исправлено
+
+- `SingboxConfig.kt` — переписан под формат sing-box 1.14:
+  - DNS-серверы теперь объявляются с полем `type` (`https`, `udp`, `fakeip`)
+    вместо устаревшего `address` со схемой; legacy-формат удалён в 1.14
+    (мы получали ошибку `legacy DNS fakeip options are deprecated`).
+  - Убран лишний `dns-direct` с `detour: "direct"` (sing-box ругался
+    `detour to an empty direct outbound makes no sense`).
+  - Hijack DNS вынесен в `route.rules` через `action=hijack-dns`,
+    fakeip-резолвер выбирается через `dns.rules.query_type=A,AAAA`.
+  - Добавлен `route.rules[].action=sniff` (вытащен из inbound, sing-box 1.14
+    требует это в route).
+- `android/scripts/build-singbox-aar.sh` — добавлен build tag `with_clash_api`.
+  `daemon.NewStartedService` пытается стартовать clash-server даже когда
+  он не настроен в JSON, без тэга падает `clash api is not included`.
+
+### Проверено end-to-end
+
+- На реальном Android-устройстве (Android 15, мобильная сеть MegaFon).
+- Подключение проходит: dnstt → sing-box → TUN установлен (fd=178, mtu=1500).
+- В браузере `https://ifconfig.co/json` возвращает IP сервера
+  `93.77.166.152` (AS205515 Telecommunication Systems LLC) — то есть
+  весь трафик идёт через туннель, а не через резолвер оператора.
+- В UI индикатор зелёный, статус «Подключено».
+
 ## 0.9.0 — 2026-05-09
 
 Замена tun2socks на sing-box. Встроенный DoH-резолвер фиксит DNS-leak,
