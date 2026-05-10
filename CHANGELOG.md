@@ -2,9 +2,9 @@
 
 ## 0.9.5 — 2026-05-10
 
-Watchdog-switch не убивает sing-box.
+Стабилизация watchdog'а на Android + первый релиз macOS-клиента.
 
-### Исправлено
+### Android — Исправлено
 
 - **«Туннель завис после 4-х watchdog-циклов».** До 0.9.5 каждый switch
   DoH делал полный `SingboxBridge.stop() → start()` с новым TUN. После
@@ -27,6 +27,53 @@ Watchdog-switch не убивает sing-box.
   он привязался к новому underlying-network. Это редкое событие
   (раз в час максимум на нормальном устройстве), libbox-state
   накапливающейся проблемы там не создаёт.
+
+### macOS — Добавлено
+
+- **Первый релиз macOS-клиента** (`macos/`). Universal-binary `.app`
+  bundle (arm64 + x86_64), DMG для распространения, ставится в
+  `/Applications/`. Запускается на macOS 14+ (Sonoma), minimum для
+  `MenuBarExtra` + `onChange(of:initial:)` API.
+- **SwiftUI menubar-приложение**: точка-иконка в строке меню (зелёная
+  при подключении, серая в idle), попап со статусом, кнопка
+  Подключить/Отключить, статистика (uptime, активные стримы, ошибки),
+  ссылки на Settings и Quit.
+- **Settings-окно**: форма для домена, public key (моноширный шрифт +
+  hex-фильтр), DoH с пресетами Cloudflare/Google/Quad9/OpenDNS/AliDNS,
+  локальный порт SOCKS5. Импорт конфига из JSON (clipboard или вставка
+  вручную) — аналог QR-сканера на Android.
+- **`DnsttManager.swift`**: запускает `dnstt-client` как subprocess
+  (`Process()`), парсит stderr через `FileHandle.bytes.lines` —
+  ловит `begin/end stream` для счётчика активных стримов, `error`/
+  `fatal` для last-error индикатора.
+- **`Config.swift`**: `TunnelConfig` + `ConfigStore` на UserDefaults
+  (`~/Library/Preferences/net.jivenet.client.plist`). Импорт JSON из
+  Android-формата (поля domain/pubkey/doh/port совместимы).
+- **`scripts/build-dnstt-darwin.sh`**: cross-compile Go-бинарника под
+  darwin/arm64 + darwin/amd64, склейка через `lipo` в universal.
+  Использует общие исходники `android/dnstt-src/` — не дублируем.
+- **`scripts/build-app.sh`**: `swift build -c release --arch arm64
+  --arch x86_64`, ручная упаковка в `.app/Contents/{MacOS, Resources,
+  Info.plist}`, ad-hoc codesign (`codesign --sign -`).
+  `LSUIElement=true` в Info.plist делает приложение «accessory» (без
+  Dock-иконки и главного окна).
+- **`scripts/build-dmg.sh`**: упаковка в DMG через встроенный
+  `hdiutil` — без зависимости от `create-dmg`. Volume-name содержит
+  версию.
+
+### macOS — Чего пока нет (плановое)
+
+- VPN-режим (захват всего трафика через utun): требует Apple Developer
+  Program + NetworkExtension entitlement + notarization. Аналог
+  Android-VPN-режима с sing-box+gVisor — отдельная задача (v0.9.6+).
+- QR-сканер через камеру AVFoundation: пользователь macOS обычно за
+  ноутом, проще скопировать JSON. Вернёмся если попросят.
+- Watchdog DoH-failover: на macOS обычно нет cellular-сети и
+  операторских DPI-блокировок, одного DoH хватает. На Android это
+  было главной мотивацией watchdog'а.
+- Статистика байт: dnstt-client не экспортирует bytes-counters в
+  stdout, а sing-box+clash-api на macOS не используем (proxy-mode
+  не требует TUN). Стримы и uptime — достаточный сигнал «работает».
 
 ## 0.9.4 — 2026-05-10
 

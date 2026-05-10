@@ -46,6 +46,13 @@ jivenet-release.apk
 # --- Onboarding bundles (генерируются scripts/onboard.sh) --------------------
 onboarding/
 
+# --- macOS client build artifacts --------------------------------------------
+macos/build/
+macos/app/.build/
+macos/app/.swiftpm/
+macos/app/Resources/dnstt-client
+macos/app/Resources/dnstt-client.*
+
 # --- IDE / OS -----------------------------------------------------------------
 .DS_Store
 Thumbs.db

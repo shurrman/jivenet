@@ -3,7 +3,7 @@
 Свой DNS-over-HTTPS туннель: интернет идёт через DNS-запросы к собственному
 authoritative-серверу. Помогает там, где обычный TCP/UDP подрезают, а DNS — нет.
 
-Состоит из двух компонентов:
+Состоит из трёх компонентов:
 
 - **`server/`** — серверное приложение для Debian 12/13 (Ubuntu 22.04+).
   Принимает DNS-запросы, расшифровывает (Noise_NK + KCP + smux), выпускает
@@ -15,6 +15,11 @@ authoritative-серверу. Помогает там, где обычный TCP
   - **Proxy** — локальный HTTP+SOCKS5 на `127.0.0.1:1080` для per-app сценариев
     (Firefox+FoxyProxy, Telegram). Требует ручной настройки в приложениях
     или SocksDroid.
+- **`macos/`** — клиент для macOS (с v0.9.5). SwiftUI menubar-приложение,
+  только Proxy-режим — поднимает SOCKS5 на `127.0.0.1:1080`, юзер
+  настраивает системный прокси в Системных настройках или per-app.
+  VPN-режим с захватом всего трафика — в планах (нужен Apple Developer
+  Program + NetworkExtension).
 
 ```
 Android apps ─▶ TUN ─▶ sing-box (libbox) ─▶ SOCKS5 ─▶ dnstt-client ─▶ DoH/UDP DNS ─▶ ваш authoritative NS ─▶ dnstt-server ─▶ 3proxy ─▶ Интернет
@@ -37,7 +42,7 @@ Android apps ─▶ TUN ─▶ sing-box (libbox) ─▶ SOCKS5 ─▶ dnstt-clie
 
 | Версия | Главное |
 |---|---|
-| **v0.9.5** | Watchdog-switch теперь рестартит только dnstt-client (не трогая sing-box). Фикс зависания туннеля после серии переключений DoH — на v0.9.4 после 4-х циклов libbox/gVisor залипал, лечилось только переподключением через UI. |
+| **v0.9.5** | **Первый релиз macOS-клиента** (SwiftUI menubar-app, proxy-mode). **Android**: watchdog-switch рестартит только dnstt-client, не трогая sing-box — фикс зависания туннеля после серии переключений DoH (на v0.9.4 после 4-х циклов libbox/gVisor залипал). |
 | v0.9.4 | DoH-приоритеты + сторожевой таймер. Cellular DNS оператора подхватывается автоматически как primary, `https://1.1.1.1/dns-query` (или другой из настроек) — fallback. При 15с тишины на текущей DoH watchdog переключается на следующую в кольце. На мобильной сети больше не надо вручную тыкать «Авто UDP». |
 | v0.9.3 | Стабилизированный auto-reconnect (фикс restart-loop'а на validation-cycles). |
 | v0.9.2 | Реальная статистика трафика на главном экране (через clash-api sing-box). |
@@ -122,14 +127,32 @@ sudo journalctl -u dnstt-server -f   # смотреть как запросы д
 
 ### 5. Установить на устройство
 
+**Android:**
+
 ```bash
 adb install onboarding/jivenet.apk
 # или: переслать APK на телефон, открыть, разрешить «Установка из неизвестных источников»
 ```
 
+**macOS** (с v0.9.5):
+
+```bash
+cd macos
+./scripts/build-app.sh release   # собрать .app
+./scripts/build-dmg.sh           # упаковать в DMG
+# или скачать готовый jivenet-X.Y.Z.dmg со страницы релиза
+open build/jivenet-X.Y.Z.dmg     # → перетащить jivenet.app в /Applications
+```
+
+Первый запуск .app: правый клик → **Open** (приложение не нотаризировано
+Apple, обычный двойной клик блокирует Gatekeeper). После этого Gatekeeper
+запоминает разрешение.
+
+Подробнее — [`macos/README.md`](macos/README.md).
+
 ### 6. Настроить и подключиться
 
-В приложении «jivenet» → ⚙ (Настройки):
+**Android** — в приложении «jivenet» → ⚙ (Настройки):
 - **Вариант 1 — QR**: «Сканировать QR» → отсканировать
   `jivenet-config.png` (можно показать с экрана другого устройства).
 - **Вариант 2 — вручную**: ввести `Tunnel domain`, `Public key` (64 hex),
@@ -137,8 +160,16 @@ adb install onboarding/jivenet.apk
 
 «Сохранить» → главный экран → «Подключить» → Android спросит разрешение
 «Разрешить VPN-соединение» → согласиться. В статус-баре появится 🔒 ключ.
+Открыть https://ifconfig.co — должен показать IP вашего VPS.
 
-Откройте https://ifconfig.co — должен показать IP вашего VPS.
+**macOS** — клик по иконке-точке в строке меню → **Настройки…**:
+- ввести `Домен`, `Public key`, проверить `DoH резолвер`,
+- либо «Из буфера» вставить JSON, скопированный с сервера
+  (`make qr --json-only`), → «Импортировать».
+
+Закрыть Settings → клик в меню-баре → **Подключить**. Иконка станет
+зелёной. Системные настройки → Сеть → Прокси SOCKS = `127.0.0.1:1080`,
+либо настроить per-app (Firefox/Telegram). https://ifconfig.co — IP сервера.
 
 ## На мобильной сети (LTE/5G/EDGE)
 
@@ -256,29 +287,45 @@ jivenet/
 │   └── docs/
 │       ├── DNS-SETUP.md
 │       └── TROUBLESHOOTING.md
-└── android/
-    ├── app/
-    │   ├── build.gradle.kts        # versionCode / versionName живут тут
-    │   ├── libs/
-    │   │   └── libbox.aar          # sing-box gomobile-bind (~14 МБ)
-    │   └── src/main/
-    │       ├── kotlin/net/jivenet/client/
-    │       │   ├── MainActivity.kt
-    │       │   ├── TunnelService.kt    # VpnService + watchdog wiring
-    │       │   ├── DohWatchdog.kt      # primary↔fallback failover (v0.9.4)
-    │       │   ├── DnsttBridge.kt      # subprocess wrapper для libdnstt_client.so
-    │       │   ├── SingboxBridge.kt    # обёртка libbox
-    │       │   ├── SingboxPlatform.kt  # PlatformInterface: TUN+protect+CA
-    │       │   ├── SingboxConfig.kt    # генератор sing-box JSON
-    │       │   ├── SingboxStats.kt     # clash-api поллер
-    │       │   └── …
-    │       ├── jniLibs/arm64-v8a/
-    │       │   └── libdnstt_client.so  # cross-compiled Go
-    │       └── res/
+├── android/
+│   ├── app/
+│   │   ├── build.gradle.kts        # versionCode / versionName (общие для всех клиентов)
+│   │   ├── libs/
+│   │   │   └── libbox.aar          # sing-box gomobile-bind (~14 МБ)
+│   │   └── src/main/
+│   │       ├── kotlin/net/jivenet/client/
+│   │       │   ├── MainActivity.kt
+│   │       │   ├── TunnelService.kt    # VpnService + watchdog wiring
+│   │       │   ├── DohWatchdog.kt      # primary↔fallback failover (v0.9.4)
+│   │       │   ├── DnsttBridge.kt      # subprocess wrapper для libdnstt_client.so
+│   │       │   ├── SingboxBridge.kt    # обёртка libbox
+│   │       │   ├── SingboxPlatform.kt  # PlatformInterface: TUN+protect+CA
+│   │       │   ├── SingboxConfig.kt    # генератор sing-box JSON
+│   │       │   ├── SingboxStats.kt     # clash-api поллер
+│   │       │   └── …
+│   │       ├── jniLibs/arm64-v8a/
+│   │       │   └── libdnstt_client.so  # cross-compiled Go
+│   │       └── res/
+│   └── scripts/
+│       ├── build-binaries.sh           # dnstt-client → jniLibs/
+│       ├── build-singbox-aar.sh        # sing-box → app/libs/libbox.aar
+│       └── build-aar.sh                # legacy (tun2socks)
+└── macos/                              # ← с v0.9.5
+    ├── README.md
+    ├── app/                            # Swift Package, executable target
+    │   ├── Package.swift               # macOS 14+
+    │   ├── Sources/jivenet/
+    │   │   ├── JivenetApp.swift        # @main, MenuBarExtra
+    │   │   ├── ContentView.swift       # попап из меню-бара
+    │   │   ├── SettingsView.swift      # форма настроек
+    │   │   ├── DnsttManager.swift      # subprocess + parse stderr → стримы
+    │   │   └── Config.swift            # TunnelConfig + UserDefaults
+    │   └── Resources/
+    │       └── dnstt-client            # universal arm64+x86_64 (gitignored)
     └── scripts/
-        ├── build-binaries.sh           # dnstt-client → jniLibs/
-        ├── build-singbox-aar.sh        # sing-box → app/libs/libbox.aar
-        └── build-aar.sh                # legacy (tun2socks)
+        ├── build-dnstt-darwin.sh       # cross-compile Go (lipo universal)
+        ├── build-app.sh                # swift build + bundle .app
+        └── build-dmg.sh                # упаковка в .dmg через hdiutil
 ```
 
 ## Лицензия
