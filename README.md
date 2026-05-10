@@ -42,7 +42,8 @@ Android apps ─▶ TUN ─▶ sing-box (libbox) ─▶ SOCKS5 ─▶ dnstt-clie
 
 | Версия | Главное |
 |---|---|
-| **v0.9.5** | **Первый релиз macOS-клиента** (SwiftUI menubar-app, proxy-mode). **Android**: watchdog-switch рестартит только dnstt-client, не трогая sing-box — фикс зависания туннеля после серии переключений DoH (на v0.9.4 после 4-х циклов libbox/gVisor залипал). |
+| **v0.9.6** | **macOS**: QR-сканер через AVFoundation. Паритет с Android по импорту конфига — навёл камеру → конфиг подхватился. |
+| v0.9.5 | **Первый релиз macOS-клиента** (SwiftUI menubar-app, proxy-mode). **Android**: watchdog-switch рестартит только dnstt-client, не трогая sing-box — фикс зависания туннеля после серии переключений DoH (на v0.9.4 после 4-х циклов libbox/gVisor залипал). |
 | v0.9.4 | DoH-приоритеты + сторожевой таймер. Cellular DNS оператора подхватывается автоматически как primary, `https://1.1.1.1/dns-query` (или другой из настроек) — fallback. При 15с тишины на текущей DoH watchdog переключается на следующую в кольце. На мобильной сети больше не надо вручную тыкать «Авто UDP». |
 | v0.9.3 | Стабилизированный auto-reconnect (фикс restart-loop'а на validation-cycles). |
 | v0.9.2 | Реальная статистика трафика на главном экране (через clash-api sing-box). |

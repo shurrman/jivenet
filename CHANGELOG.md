@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.9.6 — 2026-05-10
+
+QR-сканер на macOS — паритет с Android-клиентом по импорту конфига.
+
+### macOS — Добавлено
+
+- **`QRScannerView.swift`** — сканер QR через AVFoundation:
+  - `AVCaptureSession` + `AVCaptureMetadataOutput` с типом `.qr`,
+    делегат на main-queue → @Published `scanned: String?`.
+  - Cтатусная машина (`requesting / running / noPermission /
+    noDevice / error`) — UI показывает либо превью, либо понятное
+    сообщение «доступ к камере запрещён» с кнопкой «Открыть System
+    Settings → Privacy & Security → Camera».
+  - `AVCaptureVideoPreviewLayer` через `NSViewRepresentable` —
+    превью в SwiftUI-sheet'е.
+  - Останавливаемся после первого успешного скана (иначе делегат
+    дёргался бы повторно для того же QR в кадре).
+- **Settings → «Сканировать QR»** — кнопка с иконкой
+  `qrcode.viewfinder`, по нажатию открывается sheet с превью камеры.
+  При успешном скане тот же `ConfigStore.importJSON()` что используется
+  для clipboard-импорта — формат JSON совместим с Android-клиентом
+  (`{"domain","pubkey","doh","port"}`).
+- **`Info.plist` → `NSCameraUsageDescription`** — без него
+  `AVCaptureDevice.requestAccess` мгновенно возвращает denied и macOS
+  убивает процесс при первой попытке открыть камеру.
+
 ## 0.9.5 — 2026-05-10
 
 Стабилизация watchdog'а на Android + первый релиз macOS-клиента.
@@ -65,9 +91,7 @@
 
 - VPN-режим (захват всего трафика через utun): требует Apple Developer
   Program + NetworkExtension entitlement + notarization. Аналог
-  Android-VPN-режима с sing-box+gVisor — отдельная задача (v0.9.6+).
-- QR-сканер через камеру AVFoundation: пользователь macOS обычно за
-  ноутом, проще скопировать JSON. Вернёмся если попросят.
+  Android-VPN-режима с sing-box+gVisor — отдельная задача (v0.9.7+).
 - Watchdog DoH-failover: на macOS обычно нет cellular-сети и
   операторских DPI-блокировок, одного DoH хватает. На Android это
   было главной мотивацией watchdog'а.

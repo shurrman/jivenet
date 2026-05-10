@@ -86,6 +86,11 @@ cat > "$APP/Contents/Info.plist" <<EOF
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSHumanReadableCopyright</key><string>GPL-3.0 jivenet authors</string>
+    <!-- Камера нужна для QR-сканера в Настройках. Без этого ключа
+         AVCaptureDevice.requestAccess мгновенно возвращает denied и
+         macOS убивает процесс при первой попытке. -->
+    <key>NSCameraUsageDescription</key>
+    <string>Камера используется только для сканирования QR-кода с конфигом jivenet (домен и pubkey сервера). Кадры никуда не отправляются.</string>
 </dict>
 </plist>
 EOF

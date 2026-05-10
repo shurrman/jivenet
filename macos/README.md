@@ -13,17 +13,19 @@ SwiftUI menubar-приложение для `jivenet` DNS-over-HTTPS тунне�
   и базовой статистикой (uptime, активные стримы).
 - **Settings**: домен, public key, DoH-резолвер (с пресетами
   Cloudflare/Google/Quad9/...), порт.
-- **Импорт конфига**: вставить JSON из `make qr --json-only` на
-  сервере, кнопка «Из буфера» считает из clipboard.
+- **Импорт конфига** (с v0.9.6):
+  - **QR-сканер** через камеру (AVFoundation) — кнопка «Сканировать QR»
+    в Настройках, разрешение запрашивается при первом запуске. Формат
+    JSON совместим с Android.
+  - **JSON вставкой** — кнопка «Из буфера» считает clipboard, либо
+    paste в TextEditor.
 - Universal binary: arm64 (Apple Silicon) + x86_64 (Intel).
 
 ## Чего нет в первой версии
 
 - **VPN-режим** (захват всего трафика через утун) — требует Apple
   Developer Program ($99/год) + NetworkExtension entitlement +
-  notarization. Запланирован в v0.9.6+.
-- **QR-сканер** через камеру — на macOS реже нужен (юзер всё равно за
-  ноутом, проще скопировать JSON). На Android есть.
+  notarization. Запланирован в v0.9.7+.
 - **Watchdog с failover**ом между cellular и fallback DoH — на macOS
   обычно нет cellular-сети, и операторских DPI-блокировок нет; одного
   выбранного DoH хватает. На Android актуально из-за мобильных
@@ -86,6 +88,7 @@ macos/
 │   │   ├── ContentView.swift     # попап из меню-бара
 │   │   ├── SettingsView.swift    # форма настроек
 │   │   ├── DnsttManager.swift    # subprocess, парсер stderr
+│   │   ├── QRScannerView.swift   # AVFoundation QR + sheet (с v0.9.6)
 │   │   └── Config.swift          # TunnelConfig + ConfigStore (UserDefaults)
 │   └── Resources/
 │       └── dnstt-client          # universal arm64+x86_64 (gitignored)

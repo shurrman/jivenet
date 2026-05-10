@@ -8,6 +8,8 @@ struct SettingsView: View {
     @EnvironmentObject var configStore: ConfigStore
     @State private var importText: String = ""
     @State private var importError: String? = nil
+    @State private var showScanner: Bool = false
+    @State private var scanToast: String? = nil
 
     private let dohPresets: [(label: String, value: String)] = [
         ("Cloudflare", "https://1.1.1.1/dns-query"),
@@ -64,7 +66,19 @@ struct SettingsView: View {
             }
 
             Section("Импорт конфига") {
-                Text("Скопируй JSON с сервера (`make qr` → секция «JSON»):")
+                HStack {
+                    Button {
+                        showScanner = true
+                    } label: {
+                        Label("Сканировать QR", systemImage: "qrcode.viewfinder")
+                    }
+                    Spacer()
+                    if let toast = scanToast {
+                        Text(toast).font(.caption).foregroundStyle(.green)
+                    }
+                }
+
+                Text("Или вставь JSON c сервера (`make qr --json-only`):")
                     .font(.caption)
                 TextEditor(text: $importText)
                     .font(.system(.body, design: .monospaced))
@@ -108,6 +122,24 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+        .sheet(isPresented: $showScanner) {
+            QRScannerView(
+                onScan: { text in
+                    if configStore.importJSON(text) {
+                        scanToast = "✓ Конфиг применён"
+                        // Скрыть toast через 3 сек
+                        Task {
+                            try? await Task.sleep(nanoseconds: 3_000_000_000)
+                            scanToast = nil
+                        }
+                    } else {
+                        importError = "QR не содержит валидный JSON-конфиг"
+                    }
+                    showScanner = false
+                },
+                onCancel: { showScanner = false }
+            )
+        }
     }
 
     private var portFormatter: NumberFormatter {
