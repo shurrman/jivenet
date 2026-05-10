@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.9.3 — 2026-05-10
+
+Стабилизированный auto-reconnect.
+
+### Исправлено
+
+- **Restart-loop на validation-cycles.** В v0.9.0 `registerDefaultNetworkCallback`
+  + сравнение по `Network` handle перезапускал туннель при каждом
+  validation-probe Android'а: handle меняется (637→1131→637) хотя
+  физический интерфейс тот же. Сейчас:
+  - Подписываемся через `registerNetworkCallback` с фильтром
+    `NET_CAPABILITY_INTERNET + NOT_VPN + VALIDATED` — VPN-сети наш
+    собственный TUN не сматчит, transient-probes тоже отсеиваются.
+  - Сравниваем `LinkProperties.interfaceName` (`ccmni0`/`wlan0`/...),
+    а не Network ID. Validation-probe того же интерфейса игнорируется.
+  - Множество активных интерфейсов хранится в `ConcurrentHashMap.newKeySet`
+    — нужно понимать когда Wi-Fi присоединился рядом с Cellular.
+  - **3-секундный debounce** на restart: защита от initial-flurry
+    onAvailable при регистрации callback'а и от быстрых флэппингов сети.
+
+### Поле-проверено
+
+- На реальном Android 15 (MegaFon) убедился: с включённым туннелем
+  `cmd connectivity airplane-mode enable/disable` оставляет dnstt-client
+  активным — он сам терпит «network is unreachable» ~10–20 сек и
+  открывает новые стримы как только cellular снова доступен. Наш
+  `NetworkCallback` срабатывает именно на смену интерфейса
+  (Wi-Fi ↔ Cellular), не на короткие блипы.
+
+### Известные ограничения
+
+- Полный live-тест Wi-Fi ↔ Cellular я не делал (нет сохранённой Wi-Fi-сети
+  рядом для устройства). Логика основана на анализе sing-box-for-android
+  `DefaultNetworkMonitor` и Android-документации; smoke-тест без
+  restart-loop'а пройден.
+
 ## 0.9.2 — 2026-05-09
 
 Реальная статистика трафика на главном экране (раньше всегда 0).

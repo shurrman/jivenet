@@ -43,7 +43,10 @@ class TunnelService : VpnService() {
     private var platform: SingboxPlatform? = null
     private var connectivityCallback: ConnectivityManager.NetworkCallback? = null
 
-    @Volatile private var lastActiveNetwork: Network? = null
+    // Активные non-VPN физические интерфейсы (Wi-Fi/Cellular/Ethernet).
+    // Когда состав меняется (Wi-Fi joins/leaves, switch SIM) — перезапуск.
+    private val activeIfaces = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    @Volatile private var lastReconnectAt = 0L
     @Volatile private var running = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -126,30 +129,55 @@ class TunnelService : VpnService() {
      */
     private fun registerNetworkCallback() {
         val cm = getSystemService(ConnectivityManager::class.java) ?: return
+
+        // registerDefaultNetworkCallback не годится: при поднятом VPN
+        // default = наш TUN, и underlying-сеть мы оттуда не видим.
+        // Подписываемся отдельно на ВСЕ non-VPN INTERNET-сети с
+        // VALIDATED — это исключает VPN-петли и transient-сети
+        // которые Android создаёт во время probe.
         val req = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
             .addCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
             .build()
 
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                val prev = lastActiveNetwork
-                lastActiveNetwork = network
-                if (prev != null && prev != network && running) {
-                    Log.i(TAG, "сеть изменилась ($prev → $network) — перезапуск туннеля")
-                    scope.launch { mutex.withLock { restartTunnel() } }
-                }
+                val iface = cm.getLinkProperties(network)?.interfaceName ?: return
+                val added = activeIfaces.add(iface)
+                if (added && running) maybeRestart("интерфейс +$iface (активны: $activeIfaces)")
             }
 
             override fun onLost(network: Network) {
-                if (network == lastActiveNetwork) {
-                    Log.i(TAG, "потеряна default-сеть $network")
-                    lastActiveNetwork = null
-                }
+                val iface = cm.getLinkProperties(network)?.interfaceName ?: return
+                activeIfaces.remove(iface)
+                // На onLost не рестартим — sing-box dies сам когда сеть
+                // действительно ушла, дождёмся onAvailable.
             }
         }
-        cm.registerDefaultNetworkCallback(cb)
+        // Дебаунс при регистрации: первая порция onAvailable (для уже
+        // активных сетей) не должна вызывать restart — это initial state.
+        lastReconnectAt = System.currentTimeMillis()
+        cm.registerNetworkCallback(req, cb)
         connectivityCallback = cb
+        Log.i(TAG, "NetworkCallback registered (NOT_VPN+VALIDATED)")
+    }
+
+    /**
+     * Дебаунс перезапуска: 3-секундное окно. Защищает от:
+     *   * initial-flurry onAvailable при registerNetworkCallback;
+     *   * validation-bouncing когда Android создаёт временные Network handles;
+     *   * onAvailable/onLost-флэппинга при коротких глитчах сети.
+     */
+    private fun maybeRestart(reason: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastReconnectAt < 3_000L) {
+            Log.d(TAG, "skip restart ($reason) — debounce")
+            return
+        }
+        lastReconnectAt = now
+        Log.i(TAG, "$reason — перезапуск туннеля")
+        scope.launch { mutex.withLock { restartTunnel() } }
     }
 
     private suspend fun restartTunnel() {
