@@ -42,19 +42,61 @@ while [[ $# -gt 0 ]]; do
 done
 
 # --- источник APK ------------------------------------------------------------
-APK_SRC=""
-for c in \
-    "$HERE/jivenet-debug.apk" \
-    "$HERE/android/app/build/outputs/apk/release/app-release.apk" \
-    "$HERE/android/app/build/outputs/apk/debug/app-debug.apk" ; do
-    [[ -f "$c" ]] && APK_SRC=$c && break
-done
-if [[ -z "$APK_SRC" ]]; then
-    echo "error: APK не найден. Сначала соберите:" >&2
-    echo "       cd android && ./gradlew :app:assembleDebug" >&2
+# Всегда зовём gradle сами: assembleDebug идемпотентный (UP-TO-DATE если
+# ничего не менялось, ~1с), но гарантирует что мы шипим текущий код.
+# До v0.9.5 скрипт сначала смотрел в `$HERE/jivenet-debug.apk` (root-level
+# stale-копия) и только потом в build/outputs — на v0.9.4-релизе это
+# вылилось в загрузку 40-МБ APK от прошлого билда вместо свежего 42-МБ.
+echo "сборка APK (gradle assembleDebug)…"
+( cd "$HERE/android" && ./gradlew :app:assembleDebug ) | tail -5
+
+DEBUG_APK="$HERE/android/app/build/outputs/apk/debug/app-debug.apk"
+RELEASE_APK="$HERE/android/app/build/outputs/apk/release/app-release.apk"
+# Release APK предпочтителен (R8-минифицирован, меньше), debug — fallback.
+if [[ -f "$RELEASE_APK" ]]; then
+    APK_SRC=$RELEASE_APK
+elif [[ -f "$DEBUG_APK" ]]; then
+    APK_SRC=$DEBUG_APK
+else
+    echo "error: APK не найден после сборки — что-то пошло не так в gradle" >&2
+    echo "       проверь: cd android && ./gradlew :app:assembleDebug" >&2
     exit 1
 fi
-echo "ok: APK = $APK_SRC ($(du -h "$APK_SRC" | awk '{print $1}'))"
+
+# Сверка version в APK с build.gradle.kts: ловит ситуации когда gradle
+# вернул UP-TO-DATE на закешированный APK от прошлой версии (бывает на
+# некоторых конфигурациях build cache).
+GRADLE_VER=$(grep -oE 'versionName = "[^"]*"' "$HERE/android/app/build.gradle.kts" \
+    | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+# aapt лежит в Android SDK build-tools, не в PATH. Ищем по ANDROID_HOME
+# либо по дефолтным путям macOS/Linux. Если не нашли — version-check skip
+# (это belt-and-suspenders, основной защиты достаточно gradle build выше).
+APK_VER=""
+AAPT=""
+if command -v aapt >/dev/null 2>&1; then
+    AAPT=$(command -v aapt)
+elif command -v aapt2 >/dev/null 2>&1; then
+    AAPT=$(command -v aapt2)
+else
+    for sdk in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}" \
+               "$HOME/Library/Android/sdk" "$HOME/Android/Sdk"; do
+        [[ -z "$sdk" || ! -d "$sdk/build-tools" ]] && continue
+        # самая свежая build-tools (последняя по сортировке)
+        bt=$(ls "$sdk/build-tools" | sort -V | tail -1)
+        [[ -x "$sdk/build-tools/$bt/aapt" ]] && { AAPT=$sdk/build-tools/$bt/aapt; break; }
+    done
+fi
+if [[ -n "$AAPT" ]]; then
+    APK_VER=$("$AAPT" dump badging "$APK_SRC" 2>/dev/null \
+        | awk -F"'" '/^package:/{for(i=1;i<=NF;i++) if($i ~ /versionName=/) print $(i+1)}')
+fi
+if [[ -n "$APK_VER" && -n "$GRADLE_VER" && "$APK_VER" != "$GRADLE_VER" ]]; then
+    echo "error: APK versionName='$APK_VER' ≠ build.gradle '$GRADLE_VER'" >&2
+    echo "       вероятно gradle взял закешированный APK. Запусти:" >&2
+    echo "       cd android && ./gradlew :app:clean :app:assembleDebug" >&2
+    exit 1
+fi
+echo "ok: APK = $APK_SRC ($(du -h "$APK_SRC" | awk '{print $1}'), version=${APK_VER:-?})"
 
 # --- конфиг с сервера ---------------------------------------------------------
 echo "запрос конфига с сервера ${SSH_USER}@${SSH_HOST}…"
