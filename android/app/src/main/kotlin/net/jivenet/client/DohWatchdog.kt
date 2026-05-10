@@ -221,14 +221,69 @@ object DohChain {
     private const val PROBE_TIMEOUT_MS = 5_000
 
     /**
-     * Список DoH в порядке приоритета:
-     *   1) DNS оператора в udp:// (если cellular доступен и его DNS известен)
-     *   2) пользовательский cfg.doh (если он не совпал с пунктом 1)
+     * Список DoH **по типу активной non-VPN сети** — раньше (0.9.4-0.9.6) был
+     * `[cellular, fallback]` для любой сети, что давало бесконечный
+     * ping-pong: на сотовой РФ публичные DoH (1.1.1.1, 8.8.8.8) режутся DPI
+     * → fallback всегда мёртвый, а на Wi-Fi cellular DNS не маршрутизируется
+     * (нет route к 10.x.x.x через wlan0).
+     *
+     * Поэтому теперь:
+     *   * **На сотовой** (есть TRANSPORT_CELLULAR + NOT_VPN, нет VALIDATED Wi-Fi)
+     *     → list = [cellular_dns_оператора] (если детектится) или [cfg.doh]
+     *     иначе. Один элемент → watchdog не запускается, никаких переключений
+     *     — оператор ВСЁ равно режет публичные DoH.
+     *   * **На Wi-Fi/Ethernet** → list = [cfg.doh] (пользовательский,
+     *     обычно `https://1.1.1.1/dns-query`). Cellular DNS бесполезен
+     *     потому что не маршрутизируется через wlan0.
+     *
+     * Смена типа сети (Wi-Fi ↔ Cellular) триггерит auto-reconnect через
+     * NetworkCallback в TunnelService → `restartTunnel()` пересоберёт список
+     * под новый интерфейс.
      */
     fun buildList(ctx: Context, cfg: TunnelConfig): List<String> {
-        val cellular = SystemDns.cellularUdpResolverUrl(ctx)
         val user = cfg.doh.trim()
-        return listOfNotNull(cellular, user.takeIf { it.isNotEmpty() }).distinct()
+        val onCellular = isOnCellularOnly(ctx)
+        return if (onCellular) {
+            // На сотовой только operator-DNS работает; fallback на публичные
+            // DoH мёртвый — DPI РФ режет TCP/443 к Cloudflare/Google IP.
+            val cellular = SystemDns.cellularUdpResolverUrl(ctx)
+            Log.i(TAG, "active=CELLULAR → cellular DoH=$cellular (fallback пропущен — режется DPI)")
+            listOfNotNull(cellular ?: user.takeIf { it.isNotEmpty() })
+        } else {
+            // Wi-Fi/Ethernet: cellular DNS unreachable, fallback из настроек.
+            Log.i(TAG, "active=WIFI/ETH → fallback DoH=$user (cellular пропущен — нет маршрута)")
+            listOfNotNull(user.takeIf { it.isNotEmpty() })
+        }
+    }
+
+    /**
+     * Активна **только** сотовая сеть (нет VALIDATED Wi-Fi/Ethernet)?
+     * Проверяем все non-VPN networks: если есть Wi-Fi/Ethernet — считаем
+     * что Android отдаст приоритет ему (даже если cellular тоже attached),
+     * и cellular DNS будет недоступен через default-route.
+     */
+    private fun isOnCellularOnly(ctx: Context): Boolean {
+        val cm = ctx.getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
+            as? android.net.ConnectivityManager ?: return false
+        @Suppress("DEPRECATION")
+        val networks = cm.allNetworks
+        var hasCellular = false
+        var hasWifiOrEth = false
+        for (n in networks) {
+            val nc = cm.getNetworkCapabilities(n) ?: continue
+            if (!nc.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)) continue
+            if (!nc.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_VPN)) continue
+            // VALIDATED не требуем — на свежеподнятой сотовой validation может
+            // ещё не отработать, а нам уже нужен DoH-список.
+            if (nc.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) ||
+                nc.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)) {
+                hasWifiOrEth = true
+            }
+            if (nc.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)) {
+                hasCellular = true
+            }
+        }
+        return hasCellular && !hasWifiOrEth
     }
 
     /**

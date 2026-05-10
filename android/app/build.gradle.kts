@@ -13,8 +13,8 @@ android {
         applicationId = "net.jivenet.client"
         minSdk = 26
         targetSdk = 34
-        versionCode = 15
-        versionName = "0.9.6"
+        versionCode = 16
+        versionName = "0.9.7"
         vectorDrawables { useSupportLibrary = true }
 
         // dnstt-client собран только под arm64-v8a (95%+ современных
