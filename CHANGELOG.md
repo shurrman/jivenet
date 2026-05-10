@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.9.4 — 2026-05-10
+
+DoH-приоритеты + сторожевой таймер failover.
+
+### Добавлено
+
+- **`DohWatchdog.kt` + `DohChain`** — приоритетная очередь DoH-резолверов
+  и автоматическое переключение между ними:
+  - **Primary**: DNS оператора активной SIM (`udp://<ip>:53`),
+    автодетект через `ConnectivityManager` по `TRANSPORT_CELLULAR + NOT_VPN`.
+    Берётся даже когда default-сеть = Wi-Fi (через перебор всех networks,
+    а не только `activeNetwork` — та подсунула бы Wi-Fi).
+  - **Fallback**: текущее поле `cfg.doh` из настроек (обычно
+    `https://1.1.1.1/dns-query`).
+  - **Стартовый пробинг**: при старте/auto-reconnect перебираем очередь и
+    выбираем первую DoH, отвечающую за 5 сек. UDP-резолверы пингуем
+    минимальным DNS-запросом (`. NS IN`), HTTPS — TCP-connect к :443.
+    Пробинг делается ДО старта sing-box, пока TUN не поднят, иначе
+    пакеты ушли бы в собственный туннель. (Изначально было 3с, бампнул
+    до 5с — TCP-connect к Cloudflare через Wi-Fi на холодном соединении
+    давал false-negative.)
+  - **Сторожевой таймер** разделяет три состояния через clash-api
+    (`uploadTotal`, `downloadTotal`, `activeConns`):
+    - **healthy**: `downloadTotal` рос за последние 15 сек → DoH живой;
+    - **STALL**: `uploadTotal` рос (запросы шлются), `downloadTotal` нет
+      ≥ 15 сек → запросы пропадают в чёрную дыру, переключаем;
+    - **DEAD-FROM-START**: `downloadTotal == 0` после 60-сек initial
+      deadline + есть активные соединения → DoH не работает на этом
+      носителе, переключаем;
+    - **idle**: ни upload, ни download не двигались, никаких запросов
+      от приложений — это не поломка, watchdog молчит. Это критичное
+      различие — без него юзер открывал страницу, она грузилась, потом
+      минуту смотрел экран, и watchdog флипал DoH «потому что простой».
+    Цикл переключений бесконечный (cellular → fallback → cellular → ...) —
+    как просил юзер.
+  - 60-секундный initial-deadline на холодный старт (KCP+TLS+smux
+    handshake на медленной сети может занять до ~40с). 30с давало
+    false-positive ping-pong.
+  - При рестарте sing-box счётчики clash-api обнуляются → `setDohList`
+    после рестарта сбрасывает `lastBytesUp`/`Down` и armedAt, чтобы
+    watchdog не словил ложный stall сразу после переключения.
+- `SystemDns.cellularIPv4Resolver(ctx)` — отдельная функция для cellular
+  даже когда default = Wi-Fi.
+- `DnsttBridge.startProxy(ctx, cfg, dohOverride)` — параметр для
+  watchdog'а; раньше DoH брался только из `cfg.doh`.
+
+### Исправлено
+
+- **«Счётчики по нулям» на Wi-Fi с cellular DoH в конфиге.** До v0.9.4
+  если в `cfg.doh` стоял `udp://<cellular-DNS>:53`, при переключении
+  на Wi-Fi маршрут к этому IP терялся: dnstt-client отправлял UDP-DNS
+  в чёрную дыру (default-route → wlan0 → drop), KCP-сессия не
+  поднималась, sing-box копил мёртвые соединения. Теперь watchdog
+  через 15с переключит на fallback (`https://1.1.1.1/dns-query`),
+  и трафик пойдёт по Wi-Fi.
+
 ## 0.9.3 — 2026-05-10
 
 Стабилизированный auto-reconnect.

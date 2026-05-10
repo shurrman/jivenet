@@ -30,8 +30,8 @@ object DnsttBridge {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var readerJob: Job? = null
 
-    fun startProxy(ctx: Context, cfg: TunnelConfig) {
-        start(ctx, cfg)
+    fun startProxy(ctx: Context, cfg: TunnelConfig, dohOverride: String? = null) {
+        start(ctx, cfg, dohOverride)
     }
 
     /** VPN-режим в MVP не поддержан — требует отдельного tun2socks-бинарника. */
@@ -69,7 +69,7 @@ object DnsttBridge {
         )
     }
 
-    private fun start(ctx: Context, cfg: TunnelConfig) {
+    private fun start(ctx: Context, cfg: TunnelConfig, dohOverride: String? = null) {
         stop()
         lastErr.set("")
 
@@ -78,7 +78,7 @@ object DnsttBridge {
             throw IllegalStateException("binary not found/executable: $binary")
         }
 
-        val cmd = buildCommand(binary.absolutePath, cfg)
+        val cmd = buildCommand(binary.absolutePath, cfg, dohOverride ?: cfg.doh)
         Log.i(TAG, "exec: ${cmd.joinToString(" ")}")
 
         val pb = ProcessBuilder(cmd)
@@ -117,7 +117,7 @@ object DnsttBridge {
         }
     }
 
-    private fun buildCommand(bin: String, cfg: TunnelConfig): List<String> {
+    private fun buildCommand(bin: String, cfg: TunnelConfig, doh0: String): List<String> {
         // dnstt-client CLI:
         //   dnstt-client -doh URL        -pubkey HEX DOMAIN LOCAL_ADDR
         //   dnstt-client -dot HOST:PORT  -pubkey HEX DOMAIN LOCAL_ADDR
@@ -129,7 +129,7 @@ object DnsttBridge {
         //   "dot://host:port" → DNS-over-TLS
         //   "https://..."     → DoH (по умолчанию)
         val local = "127.0.0.1:${cfg.localPort}"
-        val doh = cfg.doh.trim()
+        val doh = doh0.trim()
         return buildList {
             add(bin)
             when {

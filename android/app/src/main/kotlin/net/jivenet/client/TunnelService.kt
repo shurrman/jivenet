@@ -11,6 +11,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import net.jivenet.client.config.ConfigRepository
+import net.jivenet.client.config.TunnelConfig
 
 /**
  * VPN-режим v0.9.0 — на базе sing-box (libbox.aar).
@@ -24,11 +25,10 @@ import net.jivenet.client.config.ConfigRepository
  *   3. ConnectivityManager.NetworkCallback ловит смену сети
  *      (Wi-Fi ↔ мобильная) → перезапускаем туннель целиком (auto-reconnect).
  *
- * По сравнению с v0.2.0 (tun2socks):
- *   + Нет DNS-leak (DNS теперь резолвится сервером, не оператором)
- *   + FakeIP — мгновенный ответ для DNS-запросов
- *   + Auto-reconnect при смене сети
- *   - +14 МБ libbox.aar в APK (R8 в release-сборке выкинет неиспользуемое).
+ * v0.9.4 добавляет [DohWatchdog]: dnstt-client получает DoH из приоритетной
+ * очереди (DNS оператора → пользовательский fallback). Watchdog следит за
+ * счётчиками clash-api и переключает DoH когда соединения есть, а байты не
+ * текут 15+ секунд — типичная картина «DoH unreachable» на новой сети.
  */
 class TunnelService : VpnService() {
 
@@ -48,6 +48,12 @@ class TunnelService : VpnService() {
     private val activeIfaces = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     @Volatile private var lastReconnectAt = 0L
     @Volatile private var running = false
+
+    // Состояние DoH-цепочки. Обновляется в startTunnel/restartTunnel и
+    // используется watchdog'ом для переключения.
+    @Volatile private var dohList: List<String> = emptyList()
+    @Volatile private var currentDoh: String = ""
+    private var watchdog: DohWatchdog? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
@@ -87,10 +93,18 @@ class TunnelService : VpnService() {
             shutdown(stopSelf = true); return
         }
 
+        // 0) Цепочка DoH + пробинг доступности.
+        //    Делаем ДО старта sing-box, пока TUN ещё не поднят — иначе
+        //    пробинг пошёл бы через наш собственный туннель и result был бы
+        //    бесполезен.
+        dohList = DohChain.buildList(this, cfg)
+        currentDoh = DohChain.pickReachable(dohList) ?: cfg.doh
+        Log.i(TAG, "DoH-цепочка: $dohList — стартуем с $currentDoh")
+
         // 1) dnstt-client subprocess — должен быть до старта sing-box.
         try {
-            DnsttBridge.startProxy(this, cfg)
-            Log.i(TAG, "dnstt-client запущен на 127.0.0.1:${cfg.localPort}")
+            DnsttBridge.startProxy(this, cfg, currentDoh)
+            Log.i(TAG, "dnstt-client запущен на 127.0.0.1:${cfg.localPort} doh=$currentDoh")
         } catch (t: Throwable) {
             Log.e(TAG, "dnstt-client старт упал", t)
             shutdown(stopSelf = true); return
@@ -116,6 +130,16 @@ class TunnelService : VpnService() {
         } catch (t: Throwable) {
             Log.e(TAG, "sing-box не запустился — конфиг или libbox", t)
             shutdown(stopSelf = true); return
+        }
+
+        // 3) Watchdog запускаем только если есть на что переключаться.
+        if (dohList.size > 1) {
+            val wd = DohWatchdog(onSwitchTo = { newDoh ->
+                // Не блокируем watchdog: рестарт sing-box занимает 2–3с.
+                scope.launch { mutex.withLock { restartWithDoh(newDoh) } }
+            })
+            wd.start(dohList, currentDoh)
+            watchdog = wd
         }
 
         registerNetworkCallback()
@@ -180,16 +204,31 @@ class TunnelService : VpnService() {
         scope.launch { mutex.withLock { restartTunnel() } }
     }
 
+    /**
+     * Полный рестарт после смены сети. Заодно пересобираем DoH-цепочку:
+     * cellular DNS на новой сети может отличаться (другая SIM/APN), либо
+     * SIM могла пропасть совсем — тогда останется только fallback.
+     */
     private suspend fun restartTunnel() {
         if (!running) return
-        // Оставляем VPN permission активным, переоткрываем только sing-box+dnstt.
         val cfg = ConfigRepository(this@TunnelService).current()
+
+        val newList = DohChain.buildList(this, cfg)
+        // Если в новом списке ещё есть текущий DoH — оставляем его (туннель
+        // только что работал на нём, нет смысла менять). Иначе пробуем
+        // выбрать живой через пробинг.
+        val newDoh = if (currentDoh in newList) currentDoh
+            else DohChain.pickReachable(newList) ?: cfg.doh
+        dohList = newList
+        currentDoh = newDoh
+        Log.i(TAG, "restart: DoH-цепочка $newList → текущий $newDoh")
+
         runCatching { SingboxBridge.stop() }
         platform?.closeTun()
         runCatching { DnsttBridge.stop() }
 
         try {
-            DnsttBridge.startProxy(this@TunnelService, cfg)
+            DnsttBridge.startProxy(this@TunnelService, cfg, newDoh)
         } catch (t: Throwable) {
             Log.e(TAG, "dnstt restart fail", t)
             shutdown(stopSelf = true); return
@@ -202,11 +241,64 @@ class TunnelService : VpnService() {
                 pi,
                 SingboxConfig.build(cfg = cfg, ourPackageName = packageName),
             )
-            Log.i(TAG, "перезапуск туннеля успешен")
+            Log.i(TAG, "перезапуск туннеля успешен (doh=$newDoh)")
         } catch (t: Throwable) {
             Log.e(TAG, "sing-box restart fail", t)
-            shutdown(stopSelf = true)
+            shutdown(stopSelf = true); return
         }
+
+        // Обновляем watchdog (если он есть): новый список + позиция.
+        watchdog?.setDohList(newList, newDoh)
+        // Если список вырос с 1 до >1 (например Wi-Fi пропал, остался только
+        // cellular но cfg.doh — публичный) — нужен новый watchdog.
+        if (watchdog == null && newList.size > 1) {
+            val wd = DohWatchdog(onSwitchTo = { d ->
+                scope.launch { mutex.withLock { restartWithDoh(d) } }
+            })
+            wd.start(newList, newDoh)
+            watchdog = wd
+        }
+    }
+
+    /**
+     * Рестарт по решению watchdog'а — переключение DoH в текущей сети.
+     * Сеть не менялась, NetworkCallback не трогаем; пересобираем только
+     * dnstt-client + sing-box (sing-box с TUN надо перезапускать, иначе
+     * SOCKS5-outbound dial'ы к старому 127.0.0.1:1080 не пересоберутся).
+     */
+    private suspend fun restartWithDoh(newDoh: String) {
+        if (!running) return
+        if (newDoh == currentDoh) return
+        currentDoh = newDoh
+        val cfg = ConfigRepository(this@TunnelService).current()
+
+        runCatching { SingboxBridge.stop() }
+        platform?.closeTun()
+        runCatching { DnsttBridge.stop() }
+
+        try {
+            DnsttBridge.startProxy(this@TunnelService, cfg, newDoh)
+        } catch (t: Throwable) {
+            Log.e(TAG, "dnstt restart-doh fail", t)
+            shutdown(stopSelf = true); return
+        }
+        val pi = SingboxPlatform(this@TunnelService, getString(R.string.app_name), MainActivity::class.java)
+        platform = pi
+        try {
+            SingboxBridge.start(
+                this@TunnelService,
+                pi,
+                SingboxConfig.build(cfg = cfg, ourPackageName = packageName),
+            )
+            Log.i(TAG, "watchdog: переключился на DoH=$newDoh")
+        } catch (t: Throwable) {
+            Log.e(TAG, "sing-box restart-doh fail", t)
+            shutdown(stopSelf = true); return
+        }
+
+        // Сбросить счётчики stall'а: после рестарта clash-api отдаст 0/0,
+        // и watchdog без сброса увидел бы «нет роста» сразу.
+        watchdog?.setDohList(dohList, newDoh)
     }
 
     override fun onRevoke() {
@@ -228,6 +320,9 @@ class TunnelService : VpnService() {
             }
         }
         connectivityCallback = null
+
+        watchdog?.stop()
+        watchdog = null
 
         runCatching { SingboxBridge.stop() }
         platform?.closeTun()
