@@ -115,7 +115,8 @@ object SingboxConfig {
           },
 
           "experimental": {
-            "cache_file": { "enabled": true, "store_fakeip": true }
+            "cache_file": { "enabled": true, "store_fakeip": true },
+            "clash_api": { "external_controller": "127.0.0.1:9090" }
           }
         }
         """.trimIndent()

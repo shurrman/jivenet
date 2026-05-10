@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.9.2 — 2026-05-09
+
+Реальная статистика трафика на главном экране (раньше всегда 0).
+
+### Добавлено
+
+- **`SingboxStats.kt`** — HTTP-поллер sing-box clash-api на
+  `127.0.0.1:9090/connections`. Возвращает `uploadTotal`/`downloadTotal`
+  (всего байт через outbound `proxy`) и количество активных стримов.
+  Запросы идут мимо TUN: наш package исключён через `exclude_package`
+  в sing-box-config, так что localhost-HTTP не зацикливается.
+- `SingboxConfig.kt` — добавлен `experimental.clash_api.external_controller`.
+  REST доступен только на 127.0.0.1, наружу не торчит.
+- `MainViewModel` опрашивает оба источника (DnsttBridge — uptime/connected,
+  SingboxStats — байты + соединения) раз в секунду и склеивает в
+  `TunnelStats`. Поле «всего» теперь означает peak активных за сессию
+  (sing-box не хранит lifetime-counter, peak — самое полезное что
+  получается из снимков).
+
+### Изменено
+
+- `strings.xml`: «Соединений: N (всего M)» → «Соединений: N (пик M)».
+
+### Совместимость
+
+- Сервер не менялся. APK совместим со всеми ранее раздаными конфигами.
+- Если sing-box ещё не запущен, поллер тихо возвращает null и UI
+  показывает нули — никаких ошибок в логах.
+
 ## 0.9.1 — 2026-05-09
 
 Fix-релиз поверх 0.9.0 — конфиг sing-box и тэги libbox под 1.14.

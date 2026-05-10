@@ -21,13 +21,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val stats: StateFlow<TunnelStats> = _stats
 
     init {
-        // Пулим статистику из Go-слоя раз в секунду. Это быстро (atomic-чтение),
-        // но не стоит крутить таймер, когда ничего не запущено — Go вернёт
-        // пустой snapshot, всё ок.
         viewModelScope.launch(Dispatchers.IO) {
+            // Раз в секунду опрашиваем DnsttBridge (uptime/connected) и
+            // sing-box clash-api (байты + активные стримы). Оба источника
+            // дёшевы: первый — atomic-чтение, второй — local HTTP.
+            //
+            // totalConns копим как peak активных за сессию (clash-api отдаёт
+            // только текущий список): когда соединения закрываются, активные
+            // падают, а total остаётся как «сколько максимум одновременно
+            // было открыто» — даёт ощущение масштаба без отдельного счётчика.
+            var sessionStartedAt = 0L
+            var peakActive = 0
             while (true) {
-                runCatching { DnsttBridge.stats() }
-                    .onSuccess { _stats.value = it }
+                val dnstt = runCatching { DnsttBridge.stats() }.getOrDefault(TunnelStats.EMPTY)
+                val sb = SingboxStats.fetch()
+
+                // Сбрасываем peak при reconnect (uptime обнулился).
+                if (dnstt.uptimeSec == 0L || sessionStartedAt == 0L) {
+                    sessionStartedAt = if (dnstt.uptimeSec > 0L) System.currentTimeMillis() else 0L
+                    if (dnstt.uptimeSec == 0L) peakActive = 0
+                }
+                val active = sb?.activeConns ?: 0
+                if (active > peakActive) peakActive = active
+
+                _stats.value = dnstt.copy(
+                    bytesSent = sb?.bytesUp ?: 0L,
+                    bytesRecv = sb?.bytesDown ?: 0L,
+                    activeConns = active,
+                    totalConns = peakActive.toLong(),
+                )
                 delay(1_000)
             }
         }

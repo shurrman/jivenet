@@ -14,7 +14,7 @@
     <string name="proxy_hint">Укажите в браузере SOCKS5 %1$s:%2$d</string>
     <string name="stats_uptime">Время: %1$s</string>
     <string name="stats_traffic">Трафик: ↑ %1$s  ↓ %2$s</string>
-    <string name="stats_streams">Соединений: %1$d (всего %2$d)</string>
+    <string name="stats_streams">Соединений: %1$d (пик %2$d)</string>
 
     <!-- Settings -->
     <string name="label_domain">Домен туннеля</string>
