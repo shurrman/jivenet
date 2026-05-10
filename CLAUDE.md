@@ -9,12 +9,24 @@
    с конкретикой (какой код / что фиксит / поле-проверено или нет).
 2. **`android/app/build.gradle.kts`** — поднять `versionCode` (на 1) и
    `versionName` (`X.Y.Z`).
-3. **Коммит** в стиле `vX.Y.Z: <короткое summary>`. Тело коммита — пара
+3. **README'ы** — пересмотреть и при необходимости обновить:
+   * **`README.md`** (корень) — таблица «Что нового в v0.9.x», секции про
+     поведение приложения (мобильная сеть, troubleshooting, ограничения),
+     размер APK, структура репозитория. **Точно** обновить таблицу версий
+     добавив строку для новой `vX.Y.Z`.
+   * **`android/README.md`** — список kotlin-файлов в структуре, таблица
+     порогов watchdog'а если они менялись, шаги сборки если появились
+     новые скрипты, перечень фич v0.9.x в шапке.
+   Если по итогам диффа изменений в коде новых файлов / переименований /
+   изменения порогов нет — README'ы можно не трогать, но **всегда**
+   проверить нет ли в них устаревших утверждений вида «X не реализовано»
+   когда X уже сделано.
+4. **Коммит** в стиле `vX.Y.Z: <короткое summary>`. Тело коммита — пара
    абзацев в духе CHANGELOG-секции, на русском, с трейлером
    `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>`.
-4. **Push в `main`** — `git push origin main` (репо solo, прямой push
+5. **Push в `main`** — `git push origin main` (репо solo, прямой push
    разрешён в `~/.claude/settings.json`).
-5. **GitHub Release** — `bash scripts/onboard.sh --release vX.Y.Z`. Скрипт
+6. **GitHub Release** — `bash scripts/onboard.sh --release vX.Y.Z`. Скрипт
    сам:
    * соберёт debug-APK через `gradlew assembleDebug` (из
      `android/app/build/outputs/`, не из root!)
@@ -25,7 +37,9 @@
    Тег `vX.Y.Z` создастся автоматически через `gh release create`.
 
 После этого проверить: `gh release list` показывает `vX.Y.Z` как Latest,
-`git tag -l 'v*'` содержит новый тег.
+`git tag -l 'v*'` содержит новый тег, на странице репо
+https://github.com/shurrman/jivenet README не противоречит фактической
+версии.
 
 ## Структура проекта
 
