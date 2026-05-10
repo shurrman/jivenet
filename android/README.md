@@ -7,6 +7,8 @@
 С v0.9.2 — статистика трафика на главном экране через clash-api.
 С v0.9.3 — стабильный auto-reconnect при смене сети (Wi-Fi ↔ Cellular).
 С v0.9.4 — failover между cellular operator-DNS и пользовательской DoH.
+С v0.9.5 — watchdog-switch рестартит только dnstt-client subprocess,
+не трогая sing-box (фикс «туннель завис после нескольких переключений DoH»).
 
 ## Быстрый запуск (локальная разработка)
 

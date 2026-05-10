@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.9.5 — 2026-05-10
+
+Watchdog-switch не убивает sing-box.
+
+### Исправлено
+
+- **«Туннель завис после 4-х watchdog-циклов».** До 0.9.5 каждый switch
+  DoH делал полный `SingboxBridge.stop() → start()` с новым TUN. После
+  ~4-х таких рестартов в окне ~10 минут libbox/gVisor залипал во
+  внутреннем состоянии: TUN reader переставал читать пакеты, при этом
+  clash-api продолжал отвечать (вводя в заблуждение — снаружи кажется
+  что туннель жив). Приложения получали `DNS_PROBE_FINISHED_NO_INTERNET`.
+  Лечилось только disconnect/reconnect через UI.
+
+  Теперь watchdog рестартит **только** dnstt-client subprocess
+  (`DnsttBridge.stop() → startProxy(... newDoh)`). sing-box остаётся
+  живой — TUN, gVisor stack, clash-api всё работает без перерыва.
+  Существующие SOCKS5-соединения `sing-box → 127.0.0.1:1080` получают
+  TCP RST когда dnstt-client умирает; sing-box re-dial'ит при следующем
+  пакете из приложения. Перерыв ~0.3-0.5с вместо ~3-5с full restart,
+  и без риска зависшего libbox-state.
+
+  Для auto-reconnect (NetworkCallback при смене Wi-Fi ↔ Cellular) полный
+  рестарт sing-box остался — там TUN всё равно надо переоткрывать чтобы
+  он привязался к новому underlying-network. Это редкое событие
+  (раз в час максимум на нормальном устройстве), libbox-state
+  накапливающейся проблемы там не создаёт.
+
 ## 0.9.4 — 2026-05-10
 
 DoH-приоритеты + сторожевой таймер failover.

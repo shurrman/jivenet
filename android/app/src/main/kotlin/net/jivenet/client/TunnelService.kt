@@ -262,9 +262,26 @@ class TunnelService : VpnService() {
 
     /**
      * Рестарт по решению watchdog'а — переключение DoH в текущей сети.
-     * Сеть не менялась, NetworkCallback не трогаем; пересобираем только
-     * dnstt-client + sing-box (sing-box с TUN надо перезапускать, иначе
-     * SOCKS5-outbound dial'ы к старому 127.0.0.1:1080 не пересоберутся).
+     * Сеть не менялась, NetworkCallback не трогаем; и **sing-box не
+     * трогаем** — рестартим ТОЛЬКО dnstt-client subprocess.
+     *
+     * Историческая справка: до v0.9.5 этот метод делал полный
+     * `SingboxBridge.stop() → start()` с новым TUN на каждый switch.
+     * После 4-х таких циклов в течение 10 минут libbox/gVisor стек
+     * залипал (TUN reader переставал читать пакеты, при этом clash-api
+     * продолжал отвечать), и весь туннель тихо «вис» — приложения
+     * получали `DNS_PROBE_FINISHED_NO_INTERNET`. Лечилось только
+     * disconnect/reconnect через UI. Корень — баг в libbox lifecycle
+     * на множественных stop/start в коротком окне.
+     *
+     * Теперь: убиваем только dnstt-client subprocess, поднимаем заново
+     * на тот же 127.0.0.1:cfg.localPort с новым DoH-аргументом. Sing-box
+     * остаётся живым — TUN, gVisor stack, clash-api всё работает без
+     * перерыва. Существующие SOCKS5-соединения sing-box → 127.0.0.1:1080
+     * получают TCP RST когда dnstt-client умирает, sing-box re-dial'ит
+     * к новому dnstt-client при следующем пакете из приложения.
+     * Cтавит ~0.3-0.5с перерыв вместо ~3-5с full restart, и без риска
+     * для libbox-state.
      */
     private suspend fun restartWithDoh(newDoh: String) {
         if (!running) return
@@ -272,32 +289,23 @@ class TunnelService : VpnService() {
         currentDoh = newDoh
         val cfg = ConfigRepository(this@TunnelService).current()
 
-        runCatching { SingboxBridge.stop() }
-        platform?.closeTun()
         runCatching { DnsttBridge.stop() }
-
         try {
             DnsttBridge.startProxy(this@TunnelService, cfg, newDoh)
         } catch (t: Throwable) {
             Log.e(TAG, "dnstt restart-doh fail", t)
             shutdown(stopSelf = true); return
         }
-        val pi = SingboxPlatform(this@TunnelService, getString(R.string.app_name), MainActivity::class.java)
-        platform = pi
-        try {
-            SingboxBridge.start(
-                this@TunnelService,
-                pi,
-                SingboxConfig.build(cfg = cfg, ourPackageName = packageName),
-            )
-            Log.i(TAG, "watchdog: переключился на DoH=$newDoh")
-        } catch (t: Throwable) {
-            Log.e(TAG, "sing-box restart-doh fail", t)
-            shutdown(stopSelf = true); return
-        }
+        Log.i(TAG, "watchdog: dnstt перезапущен на DoH=$newDoh, sing-box не трогали")
 
-        // Сбросить счётчики stall'а: после рестарта clash-api отдаст 0/0,
-        // и watchdog без сброса увидел бы «нет роста» сразу.
+        // Сбросить счётчики watchdog'а: clash-api totals не обнулились
+        // (sing-box-то живой), но «качество» текущего DoH хочется
+        // мерить с нуля — поэтому resetCounters в setDohList:
+        //   * lastBytesUp/Down = 0  → первая tick'а после рестарта
+        //     зачтёт текущие totals как «download grew» и обновит
+        //     lastDownGrowthAt; это эквивалентно «начали отсчёт».
+        //   * armedAt = now + 60с → даём время на новый KCP+TLS+smux
+        //     handshake через новый DoH.
         watchdog?.setDohList(dohList, newDoh)
     }
 
