@@ -197,14 +197,41 @@ if [[ -n "$RELEASE_TAG" ]]; then
         echo "сначала залогиньтесь: gh auth login" >&2
         exit 1
     fi
+
+    # Выдёргиваем из CHANGELOG.md только секцию текущей версии — иначе на
+    # GitHub Release появлялся бы весь changelog включая v0.1.0 с
+    # «VPN-режим заглушён» и пр. историческими ограничениями, которые
+    # юзер при скролле читает как «текущее состояние».
+    NOTES_FILE=$(mktemp -t jivenet-notes.XXXXXX)
+    trap 'rm -f "$NOTES_FILE"' EXIT
+    awk -v ver="${RELEASE_TAG#v}" '
+        # Начало нашей секции — печатаем
+        $0 ~ "^## "ver"( |$|—)" { in_section=1; print; next }
+        # Следующая секция (любая другая ## ...) — выходим
+        in_section && /^## / { exit }
+        in_section { print }
+    ' "$HERE/CHANGELOG.md" > "$NOTES_FILE"
+    if [[ ! -s "$NOTES_FILE" ]]; then
+        echo "warning: в CHANGELOG.md нет секции для $RELEASE_TAG, кладу полный файл" >&2
+        cp "$HERE/CHANGELOG.md" "$NOTES_FILE"
+    fi
+    # Хвост со ссылкой на полный CHANGELOG в репо
+    cat >> "$NOTES_FILE" <<EOF
+
+---
+
+История всех версий: [CHANGELOG.md](https://github.com/shurrman/jivenet/blob/main/CHANGELOG.md).
+EOF
+
     if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
         echo "создаю релиз $RELEASE_TAG…"
         gh release create "$RELEASE_TAG" \
             --title "$RELEASE_TAG" \
-            --notes-file "$HERE/CHANGELOG.md" \
+            --notes-file "$NOTES_FILE" \
             "$OUT/jivenet.apk" "$OUT/jivenet-config.png" "$OUT/INSTALL.txt"
     else
-        echo "релиз уже есть, прикрепляю файлы…"
+        echo "релиз уже есть, обновляю notes и прикрепляю файлы…"
+        gh release edit "$RELEASE_TAG" --notes-file "$NOTES_FILE"
         gh release upload "$RELEASE_TAG" --clobber \
             "$OUT/jivenet.apk" "$OUT/jivenet-config.png" "$OUT/INSTALL.txt"
     fi
